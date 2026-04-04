@@ -1,4 +1,5 @@
 from fastapi.testclient import TestClient
+from src.app_config import settings
 from src.main import create_app
 from src.schema.health import HealthResponse
 
@@ -28,8 +29,9 @@ def test_get_health_returns_200():
 
 def test_get_health_response_body():
     client = _make_client()
-    response = client.get("/health")
-    body = response.json()
-    assert body["status"] == "ok"
-    assert "version" in body
-    assert "environment" in body
+    body = client.get("/health").json()
+    assert body == {
+        "status": "ok",
+        "version": settings.version,
+        "environment": settings.environment,
+    }
