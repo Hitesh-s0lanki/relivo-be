@@ -1,3 +1,6 @@
+from fastapi import FastAPI
+from fastapi.testclient import TestClient
+from src.routes.health import router
 from src.schema.health import HealthResponse
 
 
@@ -14,12 +17,7 @@ def test_health_response_serializes_to_dict():
     assert data == {"status": "ok", "version": "0.1.0", "environment": "development"}
 
 
-from fastapi.testclient import TestClient
-
-
 def _make_client():
-    from fastapi import FastAPI
-    from src.routes.health import router
     app = FastAPI()
     app.include_router(router)
     return TestClient(app)
