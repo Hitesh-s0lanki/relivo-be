@@ -12,3 +12,29 @@ def test_health_response_serializes_to_dict():
     response = HealthResponse(status="ok", version="0.1.0", environment="development")
     data = response.model_dump()
     assert data == {"status": "ok", "version": "0.1.0", "environment": "development"}
+
+
+from fastapi.testclient import TestClient
+
+
+def _make_client():
+    from fastapi import FastAPI
+    from src.routes.health import router
+    app = FastAPI()
+    app.include_router(router)
+    return TestClient(app)
+
+
+def test_get_health_returns_200():
+    client = _make_client()
+    response = client.get("/health")
+    assert response.status_code == 200
+
+
+def test_get_health_response_body():
+    client = _make_client()
+    response = client.get("/health")
+    body = response.json()
+    assert body["status"] == "ok"
+    assert "version" in body
+    assert "environment" in body
