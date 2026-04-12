@@ -10,13 +10,13 @@ _SENTINEL = object()
 async def add_heartbeat_to_stream(
     generator: AsyncGenerator[str, None],
     interval: float = 10.0,
-) -> AsyncGenerator[str, None]:
+):
     """
     Wrap an SSE generator and inject heartbeat events during inactivity.
 
     If no chunk is yielded for `interval` seconds, a heartbeat SSE event is
     injected to keep the HTTP connection alive. The heartbeat check runs every
-    1 second.
+    `min(interval, 1.0)` seconds.
     """
     queue: asyncio.Queue = asyncio.Queue()
     last_event_time = [time.monotonic()]  # Use list to allow modification in nested function
@@ -29,8 +29,7 @@ async def add_heartbeat_to_stream(
             await queue.put(_SENTINEL)
 
     async def _heartbeat_monitor():
-        # Check every min(interval/2, 0.5) seconds to be responsive
-        check_interval = min(interval / 2, 0.5)
+        check_interval = min(interval, 1.0)
         while True:
             await asyncio.sleep(check_interval)
             elapsed = time.monotonic() - last_event_time[0]
