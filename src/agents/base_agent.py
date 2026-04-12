@@ -1,7 +1,7 @@
 import uuid
 from collections.abc import AsyncGenerator
 
-from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
+from langchain_core.messages import SystemMessage
 from langchain_openai import ChatOpenAI
 from langgraph.prebuilt import create_react_agent
 
@@ -49,55 +49,57 @@ class BaseAgent:
         text_id: str | None = None
         emitting_text = False
 
-        async for event in self.graph.astream_events({"messages": all_messages}, version="v2"):
-            event_type: str = event["event"]
-            node: str = event.get("metadata", {}).get("langgraph_node", "")
+        try:
+            async for event in self.graph.astream_events({"messages": all_messages}, version="v2"):
+                event_type: str = event["event"]
+                node: str = event.get("metadata", {}).get("langgraph_node", "")
 
-            if event_type == "on_chat_model_stream" and node == "agent":
-                chunk = event["data"]["chunk"]
-                content = chunk.content if isinstance(chunk.content, str) else ""
-                if content:
-                    if not emitting_text:
-                        text_id = event["run_id"][:8]
-                        emitting_text = True
-                        yield {"type": "text_start", "text_id": text_id}
-                    yield {"type": "text_delta", "text_id": text_id, "content": content}
+                if event_type == "on_chat_model_stream" and node == "agent":
+                    chunk = event["data"]["chunk"]
+                    content = chunk.content if isinstance(chunk.content, str) else ""
+                    if content:
+                        if not emitting_text:
+                            text_id = event["run_id"][:8]
+                            emitting_text = True
+                            yield {"type": "text_start", "text_id": text_id}
+                        yield {"type": "text_delta", "text_id": text_id, "content": content}
 
-            elif event_type == "on_chat_model_end" and node == "agent" and emitting_text:
-                yield {"type": "text_end", "text_id": text_id}
-                emitting_text = False
-                text_id = None
+                elif event_type == "on_chat_model_end" and node == "agent" and emitting_text:
+                    assert text_id is not None  # invariant: emitting_text is True only when text_id was assigned
+                    yield {"type": "text_end", "text_id": text_id}
+                    emitting_text = False
+                    text_id = None
 
-            elif event_type == "on_tool_start":
-                tool_call_id = event["run_id"][:8]
-                tool_name = event["name"]
-                tool_input = event["data"].get("input") or {}
-                yield {
-                    "type": "tool_start",
-                    "tool_call_id": tool_call_id,
-                    "tool_name": tool_name,
-                    "tool_input": tool_input,
-                }
+                elif event_type == "on_tool_start":
+                    tool_call_id = event["run_id"][:8]
+                    tool_name = event["name"]
+                    tool_input = event["data"].get("input") or {}
+                    yield {
+                        "type": "tool_start",
+                        "tool_call_id": tool_call_id,
+                        "tool_name": tool_name,
+                        "tool_input": tool_input,
+                    }
 
-            elif event_type == "on_tool_end":
-                tool_call_id = event["run_id"][:8]
-                raw_output = event["data"].get("output", "")
-                tool_output = (
-                    raw_output if isinstance(raw_output, dict) else {"output": str(raw_output)}
-                )
-                yield {
-                    "type": "tool_end",
-                    "tool_call_id": tool_call_id,
-                    "tool_output": tool_output,
-                }
-
-        yield {"type": "message_end", "metadata": {}}
+                elif event_type == "on_tool_end":
+                    tool_call_id = event["run_id"][:8]
+                    raw_output = event["data"].get("output", "")
+                    tool_output = (
+                        raw_output if isinstance(raw_output, dict) else {"output": str(raw_output)}
+                    )
+                    yield {
+                        "type": "tool_end",
+                        "tool_call_id": tool_call_id,
+                        "tool_output": tool_output,
+                    }
+        finally:
+            yield {"type": "message_end", "metadata": {}}
 
     async def stream(self, messages: list) -> AsyncGenerator[str, None]:
         """Convert iter_events output to SSE strings."""
         async for ev in self.iter_events(messages):
             sse = self.event_to_sse(ev)
-            if sse:
+            if sse is not None:
                 yield sse
         yield StreamProtocolBuilder.terminate_stream().to_sse()
 
