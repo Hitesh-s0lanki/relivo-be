@@ -10,6 +10,10 @@ async_session = async_sessionmaker(engine, expire_on_commit=False, class_=AsyncS
 
 @asynccontextmanager
 async def get_db_session():
-    """Async context manager for a database session."""
+    """Async context manager for a database session. Caller is responsible for commit."""
     async with async_session() as session:
-        yield session
+        try:
+            yield session
+        except Exception:
+            await session.rollback()
+            raise
