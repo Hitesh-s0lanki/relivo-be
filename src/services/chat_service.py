@@ -1,7 +1,10 @@
+import logging
 import uuid
 from collections.abc import AsyncGenerator
 
 from langchain_core.messages import AIMessage, HumanMessage
+
+logger = logging.getLogger(__name__)
 from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -63,13 +66,17 @@ class ChatService:
             )
 
         except Exception as exc:
+            logger.exception("Error during agent stream for user %s", self.request.user_id)
             yield StreamProtocolBuilder.error_part(str(exc), "stream_error").to_sse()
-            await self._finalize(
-                assistant_message_id=assistant_message_id,
-                content=None,
-                tool_events=[],
-                status="failed",
-            )
+            try:
+                await self._finalize(
+                    assistant_message_id=assistant_message_id,
+                    content=None,
+                    tool_events=[],
+                    status="failed",
+                )
+            except Exception:
+                logger.exception("Failed to finalize failed stream for message %s", assistant_message_id)
 
     # ── Private helpers ────────────────────────────────────────────────────────
 
@@ -105,10 +112,10 @@ class ChatService:
 
     async def _get_or_create_conversation(self, db: AsyncSession) -> uuid.UUID:
         """Return existing conversation ID (validated) or create a new one."""
-        if self.request.conversation_id:
+        if self.request.conversation_id is not None:
             result = await db.execute(
                 select(Conversation).where(
-                    Conversation.id == uuid.UUID(self.request.conversation_id),
+                    Conversation.id == self.request.conversation_id,  # already UUID
                     Conversation.user_id == self.request.user_id,
                 )
             )
@@ -154,20 +161,23 @@ class ChatService:
         status: str,
     ) -> None:
         """Update assistant message and persist any tool calls."""
-        async with async_session() as db:
-            await db.execute(
-                update(Message)
-                .where(Message.id == assistant_message_id)
-                .values(content=content, status=status)
-            )
-            for ev in tool_events:
-                db.add(
-                    ToolCall(
-                        message_id=assistant_message_id,
-                        tool_call_id=ev["tool_call_id"],
-                        tool_name=ev.get("tool_name", ""),
-                        tool_input=ev.get("tool_input", {}),
-                        tool_output=ev.get("tool_output", {}),
-                    )
+        try:
+            async with async_session() as db:
+                await db.execute(
+                    update(Message)
+                    .where(Message.id == assistant_message_id)
+                    .values(content=content, status=status)
                 )
-            await db.commit()
+                for ev in tool_events:
+                    db.add(
+                        ToolCall(
+                            message_id=assistant_message_id,
+                            tool_call_id=ev["tool_call_id"],
+                            tool_name=ev.get("tool_name", ""),
+                            tool_input=ev.get("tool_input", {}),
+                            tool_output=ev.get("tool_output", {}),
+                        )
+                    )
+                await db.commit()
+        except Exception:
+            logger.exception("Failed to finalize message %s with status %s", assistant_message_id, status)

@@ -87,6 +87,7 @@ async def test_iter_events_tool_call():
 
     tool_end = next(e for e in events if e["type"] == "tool_end")
     assert tool_end["tool_output"] == {"output": "Sunny, 25°C"}
+    assert tool_end["tool_name"] == "ChatOpenAI"  # event["name"] from mock
 
 
 @pytest.mark.asyncio

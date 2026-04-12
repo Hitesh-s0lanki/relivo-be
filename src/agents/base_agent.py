@@ -37,7 +37,7 @@ class BaseAgent:
           text_delta     — {"type": "text_delta", "text_id": str, "content": str}
           text_end       — {"type": "text_end", "text_id": str}
           tool_start     — {"type": "tool_start", "tool_call_id": str, "tool_name": str, "tool_input": dict}
-          tool_end       — {"type": "tool_end", "tool_call_id": str, "tool_output": dict}
+          tool_end       — {"type": "tool_end", "tool_call_id": str, "tool_name": str, "tool_output": dict}
           message_end    — {"type": "message_end", "metadata": dict}
         """
         message_id = str(uuid.uuid4())[:8]
@@ -90,6 +90,7 @@ class BaseAgent:
                     yield {
                         "type": "tool_end",
                         "tool_call_id": tool_call_id,
+                        "tool_name": event["name"],
                         "tool_output": tool_output,
                     }
         finally:
