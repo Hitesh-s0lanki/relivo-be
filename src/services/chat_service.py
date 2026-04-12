@@ -3,8 +3,6 @@ import uuid
 from collections.abc import AsyncGenerator
 
 from langchain_core.messages import AIMessage, HumanMessage
-
-logger = logging.getLogger(__name__)
 from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -14,6 +12,8 @@ from src.db.database import async_session
 from src.db.models import Conversation, Message, ToolCall
 from src.schema.chat import ChatRequest
 from src.utils.data_protocol import StreamProtocolBuilder
+
+logger = logging.getLogger(__name__)
 
 
 class ChatService:
@@ -38,11 +38,13 @@ class ChatService:
                 conversation_id, lc_messages, assistant_message_id = await self._setup(db)
         except ValueError as exc:
             yield StreamProtocolBuilder.error_part(str(exc), "not_found").to_sse()
+            yield StreamProtocolBuilder.terminate_stream().to_sse()
             return
 
         # ── Phase 2: Streaming ─────────────────────────────────────────────────
         content_parts: list[str] = []
         tool_events: list[dict] = []
+        final_status = "failed"  # default; set to "completed" only on clean finish
 
         try:
             async for ev in self.agent.iter_events(lc_messages):
@@ -55,28 +57,25 @@ class ChatService:
                 if sse is not None:
                     yield sse
 
+            final_status = "completed"
             yield StreamProtocolBuilder.terminate_stream().to_sse()
-
-            # ── Phase 3: DB finalisation ───────────────────────────────────────
-            await self._finalize(
-                assistant_message_id=assistant_message_id,
-                content="".join(content_parts),
-                tool_events=tool_events,
-                status="completed",
-            )
 
         except Exception as exc:
             logger.exception("Error during agent stream for user %s", self.request.user_id)
-            yield StreamProtocolBuilder.error_part(str(exc), "stream_error").to_sse()
+            yield StreamProtocolBuilder.error_part("An error occurred. Please try again.", "stream_error").to_sse()
+            yield StreamProtocolBuilder.terminate_stream().to_sse()
+
+        finally:
+            # Always finalize — covers GeneratorExit (client disconnect) and normal/error paths
             try:
                 await self._finalize(
                     assistant_message_id=assistant_message_id,
-                    content=None,
-                    tool_events=[],
-                    status="failed",
+                    content="".join(content_parts) if final_status == "completed" else None,
+                    tool_events=tool_events if final_status == "completed" else [],
+                    status=final_status,
                 )
             except Exception:
-                logger.exception("Failed to finalize failed stream for message %s", assistant_message_id)
+                logger.exception("Failed to finalize message %s with status %s", assistant_message_id, final_status)
 
     # ── Private helpers ────────────────────────────────────────────────────────
 

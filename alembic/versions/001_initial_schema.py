@@ -63,6 +63,8 @@ def upgrade() -> None:
         ),
     )
 
+    op.create_index("ix_messages_conversation_id", "messages", ["conversation_id"])
+
     op.create_table(
         "tool_calls",
         sa.Column("id", UUID(as_uuid=True), primary_key=True),
@@ -87,6 +89,7 @@ def upgrade() -> None:
 
 def downgrade() -> None:
     op.drop_table("tool_calls")
+    op.drop_index("ix_messages_conversation_id", "messages")
     op.drop_table("messages")
     op.drop_index("ix_conversations_user_id", "conversations")
     op.drop_table("conversations")
