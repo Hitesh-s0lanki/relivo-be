@@ -8,5 +8,9 @@ class Settings(BaseSettings):
     version: str = "0.1.0"
     environment: str = "development"
 
+    database_url: str = "postgresql+asyncpg://postgres:postgres@localhost:5432/relivo"
+    openai_api_key: str = ""
+    openai_model: str = "gpt-4o-mini"
+
 
 settings = Settings()
