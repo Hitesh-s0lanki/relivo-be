@@ -87,3 +87,53 @@ async def test_chat_service_stream_yields_sse_and_done():
         for c in chunks if '"text-delta"' in c
     ]
     assert [td["delta"] for td in text_deltas] == ["Hi", " there!"]
+
+
+async def minimal_stream():
+    yield 'data: {"type": "start", "messageId": "m1"}\n\n'
+    yield 'data: {"type": "text-start", "id": "t1"}\n\n'
+    yield 'data: {"type": "text-delta", "id": "t1", "delta": "hi"}\n\n'
+    yield 'data: {"type": "text-end", "id": "t1"}\n\n'
+    yield 'data: {"type": "finish", "messageMetadata": {}}\n\n'
+    yield "data: [DONE]\n\n"
+
+
+def test_chat_endpoint_streams_sse():
+    from src.main import app
+    from fastapi.testclient import TestClient
+
+    mock_service = MagicMock()
+    mock_service.stream = minimal_stream
+
+    with patch("src.routes.chat.ChatService", return_value=mock_service), \
+         patch("src.routes.chat.add_heartbeat_to_stream", side_effect=lambda g, **kw: g):
+
+        client = TestClient(app)
+        response = client.post(
+            "/chat",
+            json={"user_id": "u1", "message": "hello"},
+        )
+
+    assert response.status_code == 200
+    assert "text/event-stream" in response.headers["content-type"]
+    body = response.text
+    assert "text-delta" in body
+    assert "[DONE]" in body
+
+
+def test_chat_endpoint_missing_user_id_returns_422():
+    from src.main import app
+    from fastapi.testclient import TestClient
+
+    client = TestClient(app)
+    response = client.post("/chat", json={"message": "hello"})
+    assert response.status_code == 422
+
+
+def test_chat_endpoint_empty_message_returns_422():
+    from src.main import app
+    from fastapi.testclient import TestClient
+
+    client = TestClient(app)
+    response = client.post("/chat", json={"user_id": "u1", "message": ""})
+    assert response.status_code == 422
