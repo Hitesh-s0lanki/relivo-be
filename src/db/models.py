@@ -25,7 +25,7 @@ class Conversation(Base):
     )
     user_id: Mapped[str] = mapped_column(String, nullable=False, index=True)
     title: Mapped[str | None] = mapped_column(Text, nullable=True)
-    metadata_: Mapped[dict] = mapped_column("metadata", JSONB, default=_default_dict, server_default='{}')
+    metadata_: Mapped[dict] = mapped_column("metadata", JSONB, server_default='{}')
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=_utcnow
     )
@@ -38,6 +38,8 @@ class Conversation(Base):
     )
 
     def __init__(self, **kwargs: Any) -> None:
+        # SQLAlchemy column defaults only fire at INSERT time; populate here
+        # so model instances have correct values when constructed without a session.
         if "id" not in kwargs:
             kwargs["id"] = uuid.uuid4()
         if "metadata_" not in kwargs:
@@ -60,7 +62,7 @@ class Message(Base):
     )
     role: Mapped[str] = mapped_column(String(20), nullable=False)  # 'user' | 'assistant'
     content: Mapped[str | None] = mapped_column(Text, nullable=True)
-    status: Mapped[str] = mapped_column(String(20), default="completed", server_default="completed")  # streaming | completed | failed
+    status: Mapped[str] = mapped_column(String(20), server_default="completed")  # streaming | completed | failed
     sequence_number: Mapped[int] = mapped_column(Integer, nullable=False)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=_utcnow
@@ -75,6 +77,8 @@ class Message(Base):
     )
 
     def __init__(self, **kwargs: Any) -> None:
+        # SQLAlchemy column defaults only fire at INSERT time; populate here
+        # so model instances have correct values when constructed without a session.
         if "id" not in kwargs:
             kwargs["id"] = uuid.uuid4()
         if "status" not in kwargs:
@@ -97,8 +101,8 @@ class ToolCall(Base):
     )
     tool_call_id: Mapped[str] = mapped_column(String, nullable=False)
     tool_name: Mapped[str] = mapped_column(String, nullable=False)
-    tool_input: Mapped[dict] = mapped_column(JSONB, default=_default_dict, server_default='{}')
-    tool_output: Mapped[dict] = mapped_column(JSONB, default=_default_dict, server_default='{}')
+    tool_input: Mapped[dict] = mapped_column(JSONB, server_default='{}')
+    tool_output: Mapped[dict] = mapped_column(JSONB, server_default='{}')
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=_utcnow
     )
@@ -106,6 +110,8 @@ class ToolCall(Base):
     message: Mapped["Message"] = relationship("Message", back_populates="tool_calls")
 
     def __init__(self, **kwargs: Any) -> None:
+        # SQLAlchemy column defaults only fire at INSERT time; populate here
+        # so model instances have correct values when constructed without a session.
         if "id" not in kwargs:
             kwargs["id"] = uuid.uuid4()
         if "tool_input" not in kwargs:

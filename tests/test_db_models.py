@@ -30,3 +30,13 @@ def test_tool_call_fields():
     )
     assert tc.tool_name == "search"
     assert isinstance(tc.id, uuid.UUID)
+
+
+def test_tool_call_jsonb_defaults_when_not_provided():
+    tc = ToolCall(
+        message_id=uuid.uuid4(),
+        tool_call_id="run_xyz",
+        tool_name="calculate",
+    )
+    assert tc.tool_input == {}
+    assert tc.tool_output == {}
