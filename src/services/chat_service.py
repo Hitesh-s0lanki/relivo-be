@@ -10,14 +10,14 @@ from src.agents.base_agent import BaseAgent
 from src.agents.echo_agent import EchoAgent
 from src.db.database import async_session
 from src.db.models import Conversation, Message, ToolCall
-from src.schema.chat import ChatRequest
+from src.schema.chat import UserMessageRequest
 from src.utils.data_protocol import StreamProtocolBuilder
 
 logger = logging.getLogger(__name__)
 
 
 class ChatService:
-    def __init__(self, request: ChatRequest):
+    def __init__(self, request: UserMessageRequest):
         self.request = request
         self.agent: BaseAgent = EchoAgent()
 
@@ -89,7 +89,7 @@ class ChatService:
         user_msg = Message(
             conversation_id=conversation_id,
             role="user",
-            content=self.request.message,
+            content=self.request.user_message,
             status="completed",
             sequence_number=next_seq,
         )
@@ -106,15 +106,15 @@ class ChatService:
         await db.flush()
         await db.commit()
 
-        lc_messages = self._to_lc_messages(history) + [HumanMessage(content=self.request.message)]
+        lc_messages = self._to_lc_messages(history) + [HumanMessage(content=self.request.user_message)]
         return conversation_id, lc_messages, assistant_msg.id
 
     async def _get_or_create_conversation(self, db: AsyncSession) -> uuid.UUID:
         """Return existing conversation ID (validated) or create a new one."""
-        if self.request.conversation_id is not None:
+        if self.request.conversation_id != "":
             result = await db.execute(
                 select(Conversation).where(
-                    Conversation.id == self.request.conversation_id,  # already UUID
+                    Conversation.id == self.request.conversation_id,
                     Conversation.user_id == self.request.user_id,
                 )
             )

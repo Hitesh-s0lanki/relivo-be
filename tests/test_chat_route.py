@@ -3,18 +3,17 @@ import uuid
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
-from pydantic import ValidationError
-from src.schema.chat import ChatRequest
+from src.schema.chat import UserMessageRequest
 
 
-def test_chat_request_requires_user_id_and_message():
-    req = ChatRequest(user_id="u1", message="hello")
-    assert req.conversation_id is None
+def test_user_message_request_requires_no_fields():
+    req = UserMessageRequest(userId="u1", userMessage="hello")
+    assert req.conversation_id == ""
 
 
-def test_chat_request_empty_message_rejected():
-    with pytest.raises(ValidationError):
-        ChatRequest(user_id="u1", message="")
+def test_user_message_request_empty_message_allowed():
+    req = UserMessageRequest(userId="u1", userMessage="")
+    assert req.user_message == ""
 
 
 async def fake_iter_events(messages):
@@ -30,7 +29,7 @@ async def fake_iter_events(messages):
 async def test_chat_service_stream_yields_sse_and_done():
     from src.services.chat_service import ChatService
 
-    request = ChatRequest(user_id="u1", message="hello")
+    request = UserMessageRequest(userId="u1", userMessage="hello")
 
     # Mock the DB session
     mock_session = AsyncMock()
@@ -111,7 +110,7 @@ def test_chat_endpoint_streams_sse():
         client = TestClient(app)
         response = client.post(
             "/chat",
-            json={"user_id": "u1", "message": "hello"},
+            json={"userId": "u1", "userMessage": "hello"},
         )
 
     assert response.status_code == 200
@@ -121,19 +120,17 @@ def test_chat_endpoint_streams_sse():
     assert "[DONE]" in body
 
 
-def test_chat_endpoint_missing_user_id_returns_422():
+def test_chat_endpoint_accepts_empty_body():
     from src.main import app
     from fastapi.testclient import TestClient
 
-    client = TestClient(app)
-    response = client.post("/chat", json={"message": "hello"})
-    assert response.status_code == 422
+    mock_service = MagicMock()
+    mock_service.stream = minimal_stream
 
+    with patch("src.routes.chat.ChatService", return_value=mock_service), \
+         patch("src.routes.chat.add_heartbeat_to_stream", side_effect=lambda g, **kw: g):
 
-def test_chat_endpoint_empty_message_returns_422():
-    from src.main import app
-    from fastapi.testclient import TestClient
+        client = TestClient(app)
+        response = client.post("/chat", json={})
 
-    client = TestClient(app)
-    response = client.post("/chat", json={"user_id": "u1", "message": ""})
-    assert response.status_code == 422
+    assert response.status_code == 200

@@ -1,7 +1,7 @@
 from fastapi import APIRouter
 from fastapi.responses import StreamingResponse
 
-from src.schema.chat import ChatRequest
+from src.schema.chat import UserMessageRequest
 from src.services.chat_service import ChatService
 from src.utils.heartbeat_wrapper import add_heartbeat_to_stream
 
@@ -9,7 +9,7 @@ router = APIRouter(prefix="/chat", tags=["chat"])
 
 
 @router.post("")
-async def chat(request: ChatRequest) -> StreamingResponse:
+async def chat(request: UserMessageRequest) -> StreamingResponse:
     """
     Stream an agent response for the given user message.
 

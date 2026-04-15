@@ -25,6 +25,7 @@ class Conversation(Base):
     )
     user_id: Mapped[str] = mapped_column(String, nullable=False, index=True)
     title: Mapped[str | None] = mapped_column(Text, nullable=True)
+    status: Mapped[int] = mapped_column(Integer, server_default="1", default=1)
     metadata_: Mapped[dict] = mapped_column("metadata", JSONB, server_default='{}')
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=_utcnow
@@ -42,6 +43,8 @@ class Conversation(Base):
         # so model instances have correct values when constructed without a session.
         if "id" not in kwargs:
             kwargs["id"] = uuid.uuid4()
+        if "status" not in kwargs:
+            kwargs["status"] = 1
         if "metadata_" not in kwargs:
             kwargs["metadata_"] = {}
         if "created_at" not in kwargs:
