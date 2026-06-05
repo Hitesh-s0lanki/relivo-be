@@ -1,18 +1,28 @@
 """Base LangChain agent harness with streaming helpers."""
 
+import warnings
 from collections.abc import AsyncIterator, Callable, Iterator, Sequence
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, Literal
 
-from langchain.agents import create_agent
-from langchain_core.language_models.chat_models import BaseChatModel
-from langchain_core.messages import BaseMessage
-from langchain_core.tools import BaseTool
-from langgraph.checkpoint.memory import InMemorySaver
+from langchain_core._api.deprecation import LangChainPendingDeprecationWarning
+
+warnings.filterwarnings(
+    "ignore",
+    message="The default value of `allowed_objects` will change in a future version.*",
+    category=LangChainPendingDeprecationWarning,
+)
+
+from langchain.agents import create_agent  # noqa: E402
+from langchain_core.language_models.chat_models import BaseChatModel  # noqa: E402
+from langchain_core.messages import BaseMessage  # noqa: E402
+from langchain_core.tools import BaseTool  # noqa: E402
+from langgraph.checkpoint.memory import InMemorySaver  # noqa: E402
 
 AgentModel = str | BaseChatModel
 AgentTool = BaseTool | Callable[..., Any] | dict[str, Any]
 StreamMode = str | Sequence[str]
+StreamVersion = Literal["v1", "v2"]
 
 
 @dataclass(frozen=True, slots=True)
@@ -22,6 +32,7 @@ class BaseAgentConfig:
     model: AgentModel
     system_prompt: str = "You are a helpful assistant. Be concise, accurate, and direct."
     name: str = "base_agent"
+    stream_version: StreamVersion = "v2"
 
 
 class BaseAgent:
@@ -72,12 +83,13 @@ class BaseAgent:
         context: Any | None = None,
     ) -> Iterator[str]:
         """Yield assistant text chunks from a synchronous agent stream."""
-        kwargs = self._run_kwargs(thread_id=thread_id, context=context)
         for chunk in self.graph.stream(
             self._messages_input(prompt),
-            stream_mode="messages",
-            version="v2",
-            **kwargs,
+            **self._stream_kwargs(
+                thread_id=thread_id,
+                context=context,
+                stream_mode="messages",
+            ),
         ):
             text = self._stream_chunk_text(chunk)
             if text:
@@ -92,12 +104,13 @@ class BaseAgent:
         stream_mode: StreamMode = ("updates", "messages"),
     ) -> Iterator[Any]:
         """Yield the raw LangChain agent stream, including model/tool updates."""
-        kwargs = self._run_kwargs(thread_id=thread_id, context=context)
         yield from self.graph.stream(
             self._messages_input(prompt),
-            stream_mode=stream_mode,
-            version="v2",
-            **kwargs,
+            **self._stream_kwargs(
+                thread_id=thread_id,
+                context=context,
+                stream_mode=stream_mode,
+            ),
         )
 
     async def astream_text(
@@ -108,12 +121,13 @@ class BaseAgent:
         context: Any | None = None,
     ) -> AsyncIterator[str]:
         """Yield assistant text chunks from an async agent stream."""
-        kwargs = self._run_kwargs(thread_id=thread_id, context=context)
         async for chunk in self.graph.astream(
             self._messages_input(prompt),
-            stream_mode="messages",
-            version="v2",
-            **kwargs,
+            **self._stream_kwargs(
+                thread_id=thread_id,
+                context=context,
+                stream_mode="messages",
+            ),
         ):
             text = self._stream_chunk_text(chunk)
             if text:
@@ -128,12 +142,13 @@ class BaseAgent:
         stream_mode: StreamMode = ("updates", "messages"),
     ) -> AsyncIterator[Any]:
         """Yield the raw async LangChain agent stream, including model/tool updates."""
-        kwargs = self._run_kwargs(thread_id=thread_id, context=context)
         async for chunk in self.graph.astream(
             self._messages_input(prompt),
-            stream_mode=stream_mode,
-            version="v2",
-            **kwargs,
+            **self._stream_kwargs(
+                thread_id=thread_id,
+                context=context,
+                stream_mode=stream_mode,
+            ),
         ):
             yield chunk
 
@@ -147,6 +162,20 @@ class BaseAgent:
         if context is not None:
             kwargs["context"] = context
         return kwargs
+
+    def _stream_kwargs(
+        self,
+        *,
+        thread_id: str,
+        context: Any | None,
+        stream_mode: StreamMode,
+    ) -> dict[str, Any]:
+        """Build shared LangGraph stream kwargs."""
+        return {
+            **self._run_kwargs(thread_id=thread_id, context=context),
+            "stream_mode": stream_mode,
+            "version": self.config.stream_version,
+        }
 
     @classmethod
     def _latest_text(cls, messages: Sequence[BaseMessage]) -> str:
