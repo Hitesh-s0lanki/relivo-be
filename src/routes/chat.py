@@ -1,85 +1,186 @@
-"""Chat streaming endpoints: POST /chat, POST /conversation/cancel-response, GET /chat/resume-stream/{id}."""
+"""Streaming chat endpoint backed by the demo LangChain agent."""
 
-import logging
+import asyncio
+import json
+import os
+from collections.abc import AsyncIterator
+from functools import lru_cache
+from typing import Any, Literal
 
-from fastapi import APIRouter
-from fastapi.responses import JSONResponse, StreamingResponse
+from fastapi import APIRouter, Depends, HTTPException
+from fastapi.responses import StreamingResponse
+from langchain_core.language_models.fake_chat_models import FakeListChatModel
+from langchain_core.tools import tool
+from pydantic import BaseModel, Field
 
-from src.schema.chat import CancelMessageRequest, UserMessageRequest
-from src.schema.conversation import ConversationStatus
-from src.services.chat_service import ChatService
-from src.services.conversation_service import ConversationService
-from src.utils.data_protocol import StreamProtocolBuilder
-from src.utils.heartbeat_wrapper import add_heartbeat_to_stream
-from src.utils.stream_registry import stream_registry
+from src.agents import BaseAgent, BaseAgentConfig
 
 router = APIRouter()
-logger = logging.getLogger(__name__)
 
 
-@router.post("/chat")
-async def chat(request: UserMessageRequest) -> StreamingResponse:
-    """Stream an agent response for the given user message."""
-    service = ChatService(request)
-    generator = add_heartbeat_to_stream(service.stream(), interval=10.0)
-    return StreamingResponse(generator, media_type="text/event-stream")
+class ChatRequest(BaseModel):
+    """Request body for streaming chat."""
+
+    message: str = Field(..., min_length=1, max_length=8000)
+    thread_id: str = Field(default="demo", min_length=1, max_length=200)
+    stream_mode: tuple[Literal["updates", "messages"], ...] = ("updates", "messages")
 
 
-@router.post("/conversation/cancel-response")
-async def cancel_response(request: CancelMessageRequest) -> JSONResponse:
-    """Cancel an in-progress SSE response."""
-    user_req = request.user_message_request
-    if not user_req or not user_req.conversation_id:
-        return JSONResponse(
-            status_code=400,
-            content={"detail": "userMessageRequest.conversationId is required"},
-        )
-
-    cancelled = await stream_registry.cancel(user_req.conversation_id)
-    if cancelled:
-        logger.info("Cancelled active stream for %s", user_req.conversation_id)
-        return JSONResponse(
-            status_code=200,
-            content={"detail": "Cancel signal sent — stream will stop shortly"},
-        )
-    return JSONResponse(
-        status_code=200,
-        content={"detail": "No active stream found — response may have already completed"},
+@tool
+def get_demo_context(topic: str) -> str:
+    """Return demo context for a topic."""
+    return (
+        f"Demo context for {topic}: stream model tokens, tool calls, tool results, "
+        "agent step updates, and terminal errors as separate events."
     )
 
 
-@router.get("/chat/resume-stream/{conversation_id}", response_model=None)
-async def resume_stream(conversation_id: str) -> StreamingResponse:
-    """Resume a stream for conversations that are still in STREAMING status."""
-    conv_service = ConversationService()
+@lru_cache(maxsize=1)
+def get_demo_agent() -> BaseAgent:
+    """Build the demo chat agent once per process."""
+    if os.getenv("OPENAI_API_KEY"):
+        model: str | FakeListChatModel = os.getenv("RELIVO_CHAT_MODEL", "openai:gpt-4.1-mini")
+        tools = [get_demo_context]
+    else:
+        model = FakeListChatModel(
+            responses=[
+                (
+                    "OPENAI_API_KEY is not configured. This is the local demo fallback stream. "
+                    "Set OPENAI_API_KEY to stream real model tokens, tool calls, and tool results."
+                )
+            ]
+        )
+        tools = []
 
-    async def generator():
-        conv_status = await conv_service.get_conversation_status(conversation_id)
-        if conv_status != int(ConversationStatus.STREAMING):
-            yield StreamProtocolBuilder.message_end(
-                {"resumed": False, "reason": "already_finalized", "status": conv_status}
-            ).to_sse()
-            yield StreamProtocolBuilder.terminate_stream().to_sse()
-            return
+    return BaseAgent(
+        BaseAgentConfig(
+            model=model,
+            system_prompt=(
+                "You are the Relivo demo streaming agent. Be concise. "
+                "When tools are available, use them before answering."
+            ),
+            name="demo_agent",
+        ),
+        tools=tools,
+    )
 
-        stream_status = await stream_registry.get_status(conversation_id)
-        if stream_status != "active":
-            yield StreamProtocolBuilder.message_end(
-                {"resumed": False, "reason": "stream_not_active", "status": stream_status}
-            ).to_sse()
-            yield StreamProtocolBuilder.terminate_stream().to_sse()
-            return
 
-        if await stream_registry.has_chunks(conversation_id):
-            for chunk in await stream_registry.replay(conversation_id, 0):
-                yield chunk
+DemoAgentDependency = Depends(get_demo_agent)
 
-        async for chunk in stream_registry.subscribe(conversation_id):
-            yield chunk
 
-        yield StreamProtocolBuilder.message_end(
-            {"resumed": True, "reason": "stream_completed"}
-        ).to_sse()
-        yield StreamProtocolBuilder.terminate_stream().to_sse()
+@router.post("/chat")
+async def chat(
+    request: ChatRequest,
+    agent: BaseAgent = DemoAgentDependency,
+) -> StreamingResponse:
+    """Stream a demo agent response as Server-Sent Events."""
+    if not request.message.strip():
+        raise HTTPException(status_code=422, detail="message cannot be blank")
 
-    return StreamingResponse(generator(), media_type="text/event-stream")
+    return StreamingResponse(
+        _stream_chat(request, agent),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",
+        },
+    )
+
+
+async def _stream_chat(request: ChatRequest, agent: BaseAgent) -> AsyncIterator[str]:
+    yield _sse("start", {"thread_id": request.thread_id})
+
+    try:
+        async for chunk in agent.astream_events(
+            request.message,
+            thread_id=request.thread_id,
+            stream_mode=request.stream_mode,
+        ):
+            for event_name, payload in _normalize_agent_chunk(chunk):
+                yield _sse(event_name, payload)
+    except asyncio.CancelledError:
+        raise
+    except Exception as exc:
+        yield _sse("error", {"message": "chat stream failed", "detail": str(exc)})
+    finally:
+        yield _sse("done", {"thread_id": request.thread_id})
+
+
+def _normalize_agent_chunk(chunk: Any) -> list[tuple[str, dict[str, Any]]]:
+    if not isinstance(chunk, dict):
+        return [("event", {"value": str(chunk)})]
+
+    event_type = chunk.get("type")
+    if event_type == "messages":
+        return [("message", _normalize_message_chunk(chunk))]
+
+    if event_type == "updates":
+        return [
+            ("update", payload)
+            for payload in _normalize_update_chunk(chunk)
+        ]
+
+    return [("event", {"type": event_type, "data": _json_safe(chunk.get("data"))})]
+
+
+def _normalize_message_chunk(chunk: dict[str, Any]) -> dict[str, Any]:
+    data = chunk.get("data")
+    if not isinstance(data, tuple) or len(data) < 2:
+        return {"content": "", "metadata": {}}
+
+    message_chunk, metadata = data
+    return {
+        "node": metadata.get("langgraph_node") if isinstance(metadata, dict) else None,
+        "content": _content_to_text(getattr(message_chunk, "content", "")),
+        "tool_call_chunks": _json_safe(getattr(message_chunk, "tool_call_chunks", [])),
+        "metadata": _json_safe(metadata),
+    }
+
+
+def _normalize_update_chunk(chunk: dict[str, Any]) -> list[dict[str, Any]]:
+    data = chunk.get("data")
+    if not isinstance(data, dict):
+        return [{"step": "unknown", "data": _json_safe(data)}]
+
+    updates: list[dict[str, Any]] = []
+    for step, step_data in data.items():
+        messages = step_data.get("messages", []) if isinstance(step_data, dict) else []
+        latest = messages[-1] if messages else None
+        updates.append(
+            {
+                "step": step,
+                "name": getattr(latest, "name", None),
+                "content": _content_to_text(getattr(latest, "content", "")),
+                "tool_calls": _json_safe(getattr(latest, "tool_calls", [])),
+            }
+        )
+
+    return updates
+
+
+def _content_to_text(content: Any) -> str:
+    if isinstance(content, str):
+        return content
+    if not isinstance(content, list):
+        return ""
+
+    parts: list[str] = []
+    for item in content:
+        if isinstance(item, str):
+            parts.append(item)
+        elif isinstance(item, dict) and item.get("type") == "text":
+            parts.append(str(item.get("text", "")))
+    return "".join(parts)
+
+
+def _json_safe(value: Any) -> Any:
+    try:
+        json.dumps(value)
+        return value
+    except TypeError:
+        return str(value)
+
+
+def _sse(event: str, data: dict[str, Any]) -> str:
+    return f"event: {event}\ndata: {json.dumps(data, ensure_ascii=False)}\n\n"
