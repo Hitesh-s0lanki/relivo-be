@@ -225,7 +225,7 @@ pydantic-core==2.41.5
     # via
     #   pydantic
     #   relivo-be-server
-pydantic-settings==2.13.1
+pydantic-settings==2.14.2
     # via relivo-be-server
 pygments==2.20.0
     # via
