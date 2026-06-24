@@ -147,11 +147,7 @@ async def test_chat_streams_errors() -> None:
 
     body = response.text
     parts = _sse_data_parts(body)
-    error_parts = [
-        part
-        for part in parts
-        if isinstance(part, dict) and part.get("type") == "error"
-    ]
+    error_parts = [part for part in parts if isinstance(part, dict) and part.get("type") == "error"]
 
     assert response.status_code == 200
     assert error_parts == [

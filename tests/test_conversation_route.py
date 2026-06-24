@@ -44,9 +44,7 @@ class FakeConversationService:
         conversations = list(self.conversations.values())
         if user_id:
             return [
-                conversation
-                for conversation in conversations
-                if conversation.user_id == user_id
+                conversation for conversation in conversations if conversation.user_id == user_id
             ]
         return conversations
 
@@ -109,8 +107,7 @@ class FakeConversationService:
             text=payload.text,
             tool_calls=[self._tool_call(tool_call) for tool_call in payload.tool_calls],
             reasoning_entries=[
-                self._reasoning_entry(reasoning)
-                for reasoning in payload.reasoning_entries
+                self._reasoning_entry(reasoning) for reasoning in payload.reasoning_entries
             ],
             message_metadata=payload.metadata,
             created_at=now(),

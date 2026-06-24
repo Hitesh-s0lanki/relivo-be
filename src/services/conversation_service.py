@@ -51,9 +51,7 @@ class ConversationService:
         statement = select(Conversation)
         if user_id:
             statement = statement.where(Conversation.user_id == user_id)
-        result = await self.session.execute(
-            statement.order_by(Conversation.updated_at.desc())
-        )
+        result = await self.session.execute(statement.order_by(Conversation.updated_at.desc()))
         return list(result.scalars().all())
 
     async def create_conversation(self, payload: ConversationCreate) -> Conversation:
@@ -77,9 +75,7 @@ class ConversationService:
             select(Conversation)
             .where(Conversation.id == conversation_id)
             .options(
-                selectinload(Conversation.messages).selectinload(
-                    ConversationMessage.tool_calls
-                ),
+                selectinload(Conversation.messages).selectinload(ConversationMessage.tool_calls),
                 selectinload(Conversation.messages).selectinload(
                     ConversationMessage.reasoning_entries
                 ),
@@ -138,12 +134,10 @@ class ConversationService:
             text=payload.text,
             message_metadata=payload.metadata,
             tool_calls=[
-                self._tool_call_from_payload(tool_call)
-                for tool_call in payload.tool_calls
+                self._tool_call_from_payload(tool_call) for tool_call in payload.tool_calls
             ],
             reasoning_entries=[
-                self._reasoning_from_payload(reasoning)
-                for reasoning in payload.reasoning_entries
+                self._reasoning_from_payload(reasoning) for reasoning in payload.reasoning_entries
             ],
         )
         conversation.updated_at = utc_now()

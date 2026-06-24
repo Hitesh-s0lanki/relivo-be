@@ -38,17 +38,39 @@ The app loads from a `.env` file or environment variables. All have defaults:
 | `RELIVO_CHAT_MODEL` | `gpt-5-mini` | Reasoning-capable chat model used when `OPENAI_API_KEY` is set |
 | `RELIVO_CHAT_REASONING_EFFORT` | `low` | Reasoning effort for the chat model |
 | `RELIVO_CHAT_USE_RESPONSES_API` | `true` | Uses OpenAI Responses API mode for reasoning models |
+| `AWS_REGION` | `us-east-1` | AWS region for S3 file storage |
+| `AWS_ACCESS_KEY_ID` | unset | AWS access key id used by boto3 for S3 |
+| `AWS_SECRET_ACCESS_KEY` | unset | AWS secret access key used by boto3 for S3 |
+| `AWS_S3_BUCKET` | unset | S3 bucket used for user file uploads |
+| `AWS_S3_KEY_PREFIX` | `user-files` | S3 key prefix for uploaded files |
+| `AWS_S3_MAX_UPLOAD_MB` | `25` | Maximum uploaded file size in MB |
+| `AWS_S3_PRESIGNED_EXPIRES_SECONDS` | `3600` | Lifetime for generated download URLs |
+| `AWS_S3_ENDPOINT_URL` | unset | Optional S3-compatible endpoint URL |
+| `AWS_S3_SERVER_SIDE_ENCRYPTION` | unset | Optional S3 server-side encryption mode |
+| `AWS_S3_KMS_KEY_ID` | unset | Optional KMS key id when using KMS encryption |
 
 ## API
 
 - `POST /chat` — stream an agent response with Server-Sent Events
 - `/conversations` — CRUD for conversations and conversation messages
+- `/files` — upload, list, fetch, download, and delete user files stored in S3
 - `GET /docs` — Swagger UI
 - `GET /redoc` — ReDoc
 
 Open `http://localhost:8000/docs` for the full interactive API documentation.
 See `docs/chat_request_api.md` for the chat request API contract.
 See `docs/conversation_api.md` for the conversation API contract.
+
+File uploads are multipart form requests:
+
+```bash
+curl -X POST http://localhost:8000/files \
+  -F "user_id=user-123" \
+  -F "file=@/path/to/document.pdf"
+```
+
+List a user's files with `GET /files/users/{user_id}` and create a temporary download URL
+with `GET /files/{file_id}/download`.
 
 ```bash
 curl -N -X POST http://localhost:8000/chat \

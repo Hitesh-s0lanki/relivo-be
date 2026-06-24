@@ -6,10 +6,12 @@ from src.models.message import (
     ConversationMessageReasoning,
     ConversationMessageToolCall,
 )
+from src.models.user_file import UserFile
 
 __all__ = [
     "Conversation",
     "ConversationMessage",
     "ConversationMessageReasoning",
     "ConversationMessageToolCall",
+    "UserFile",
 ]

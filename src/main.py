@@ -28,6 +28,8 @@ load_dotenv()
 from src.agents import warm_orchestrator_agent  # noqa: E402
 from src.controllers.chat_controller import router as chat_router  # noqa: E402
 from src.controllers.conversation_controller import router as conversation_router  # noqa: E402
+from src.controllers.health_controller import router as health_router  # noqa: E402
+from src.controllers.user_file_controller import router as user_file_router  # noqa: E402
 from src.utils.error_response import build_error_response, log_error_response  # noqa: E402
 
 logger = logging.getLogger(__name__)
@@ -115,8 +117,10 @@ def create_app() -> FastAPI:
     app = FastAPI(title="Relivo BE Server", lifespan=lifespan)
     app.add_exception_handler(StarletteHTTPException, http_exception_handler)
     app.add_exception_handler(RequestValidationError, request_validation_exception_handler)
+    app.include_router(health_router)
     app.include_router(chat_router)
     app.include_router(conversation_router)
+    app.include_router(user_file_router)
     return app
 
 
