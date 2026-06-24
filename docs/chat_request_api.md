@@ -44,6 +44,8 @@ Body:
 | `thread_id` | string | No | `demo` | Conversation thread identifier used by agent memory/checkpointing. |
 | `stream_mode` | string[] | No | `["updates", "messages"]` | Agent stream event types to include. Supported values are `updates` and `messages`. |
 
+When `thread_id` is an existing conversation UUID and the agent uses tools, the backend also stores the completed agent response with its tool calls in the conversation API. Non-UUID thread ids and no-tool chat turns are streamed only.
+
 Example:
 
 ```json

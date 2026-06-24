@@ -1,6 +1,7 @@
 # Conversation API
 
-The conversation API stores chat history separately from the `/chat` streaming endpoint.
+The conversation API stores chat history. The `/chat` streaming endpoint also stores completed
+tool-using agent responses when `thread_id` is an existing conversation UUID.
 
 A conversation can contain many messages. A message can be a user message or an agent message. A single agent message can contain answer text, multiple tool calls, and multiple reasoning records.
 
