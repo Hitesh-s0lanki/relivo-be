@@ -38,6 +38,9 @@ The app loads from a `.env` file or environment variables. All have defaults:
 | `RELIVO_CHAT_MODEL` | `gpt-5-mini` | Reasoning-capable chat model used when `OPENAI_API_KEY` is set |
 | `RELIVO_CHAT_REASONING_EFFORT` | `low` | Reasoning effort for the chat model |
 | `RELIVO_CHAT_USE_RESPONSES_API` | `true` | Uses OpenAI Responses API mode for reasoning models |
+| `FIRECRAWL_API_KEY` | unset | Enables authenticated Firecrawl MCP tools for agent web search, scrape, crawl, and parse access |
+| `FIRECRAWL_MCP_ENABLED` | `true` | Toggle Firecrawl MCP tool loading for the chat agent |
+| `FIRECRAWL_MCP_URL` | `https://mcp.firecrawl.dev/v2/mcp` | Firecrawl MCP endpoint. Supports `{FIRECRAWL_API_KEY}` in custom URLs |
 | `AWS_REGION` | `us-east-1` | AWS region for S3 file storage |
 | `AWS_ACCESS_KEY_ID` | unset | AWS access key id used by boto3 for S3 |
 | `AWS_SECRET_ACCESS_KEY` | unset | AWS secret access key used by boto3 for S3 |
