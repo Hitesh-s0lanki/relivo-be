@@ -1,5 +1,6 @@
 """FastAPI application entrypoint."""
 
+import inspect
 import logging
 import os
 import sys
@@ -96,6 +97,8 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
     """Warm reusable application resources at server startup."""
     logger.info("Application startup started")
     agent = warm_orchestrator_agent()
+    if inspect.isawaitable(agent):
+        agent = await agent
     logger.info(
         "Orchestrator agent warmed name=%s model=%s tools=%s",
         agent.config.name,

@@ -9,9 +9,16 @@ from src.agents.orchestrator import (
     build_openai_chat_model,
     env_bool,
     load_orchestrator_prompt,
+    load_orchestrator_tools,
 )
 from src.schemas.chat import ChatRequest
 from src.services.chat_service import ChatService
+from src.tools import (
+    DEFAULT_FIRECRAWL_MCP_URL,
+    firecrawl_mcp_auth_config,
+    firecrawl_mcp_url,
+    load_firecrawl_mcp_tools,
+)
 
 
 class FailingAgent:
@@ -75,6 +82,51 @@ def test_build_openai_chat_model_uses_env_overrides(monkeypatch) -> None:
     assert model.model_name == "gpt-5"
     assert model.reasoning_effort == "high"
     assert model.use_responses_api is False
+
+
+def test_firecrawl_mcp_config_uses_env_api_key(monkeypatch) -> None:
+    """Firecrawl MCP auth should be configured from environment variables."""
+    monkeypatch.delenv("FIRECRAWL_MCP_URL", raising=False)
+    monkeypatch.setenv("FIRECRAWL_API_KEY", "fc-test")
+
+    assert firecrawl_mcp_url() == DEFAULT_FIRECRAWL_MCP_URL
+    assert firecrawl_mcp_auth_config() == {"headers": {"Authorization": "Bearer fc-test"}}
+
+
+def test_firecrawl_mcp_url_can_expand_env_api_key(monkeypatch) -> None:
+    """Firecrawl MCP URL overrides should support key placeholders."""
+    monkeypatch.setenv(
+        "FIRECRAWL_MCP_URL",
+        "https://mcp.firecrawl.dev/{FIRECRAWL_API_KEY}/v2/mcp",
+    )
+    monkeypatch.setenv("FIRECRAWL_API_KEY", "fc-test")
+
+    assert firecrawl_mcp_url() == "https://mcp.firecrawl.dev/fc-test/v2/mcp"
+    assert firecrawl_mcp_auth_config() == {}
+
+
+@pytest.mark.asyncio
+async def test_firecrawl_mcp_tools_skip_default_hosted_url_without_key(monkeypatch) -> None:
+    """Hosted Firecrawl MCP should not be called without an API key."""
+    monkeypatch.delenv("FIRECRAWL_MCP_URL", raising=False)
+    monkeypatch.delenv("FIRECRAWL_API_KEY", raising=False)
+
+    assert await load_firecrawl_mcp_tools() == []
+
+
+@pytest.mark.asyncio
+async def test_load_orchestrator_tools_keeps_local_tool_when_firecrawl_fails(monkeypatch) -> None:
+    """The agent should still start when Firecrawl MCP is temporarily unavailable."""
+
+    async def fail_firecrawl_tools() -> list:
+        raise RuntimeError("network unavailable")
+
+    monkeypatch.setattr("src.agents.orchestrator.load_firecrawl_mcp_tools", fail_firecrawl_tools)
+
+    tools = await load_orchestrator_tools()
+
+    assert len(tools) == 1
+    assert tools[0].name == "get_demo_context"
 
 
 def test_env_bool_handles_common_truthy_values(monkeypatch) -> None:
