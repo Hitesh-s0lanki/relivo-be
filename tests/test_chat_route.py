@@ -1,237 +1,220 @@
-# tests/test_chat_route.py
+"""Tests for the streaming chat route."""
+
 import json
-import uuid
-from unittest.mock import AsyncMock, MagicMock, patch
+import logging
+from collections.abc import AsyncIterator
+from types import SimpleNamespace
 
 import pytest
+from httpx import ASGITransport, AsyncClient
 
-from src.schema.chat import UserMessageRequest, CancelMessageRequest
-
-
-# ── Schema tests ──────────────────────────────────────────────────────────────
-
-def test_user_message_request_requires_conversation_id_and_message():
-    req = UserMessageRequest(
-        conversationId="c1", userId="u1", userMessage="hello"
-    )
-    assert req.conversation_id == "c1"
-    assert req.user_message == "hello"
+from src.agents import get_chat_agent
+from src.main import create_app
 
 
-def test_user_message_request_empty_defaults():
-    req = UserMessageRequest()
-    assert req.conversation_id == ""
-    assert req.user_message == ""
+class FakeStreamingAgent:
+    """Small fake agent for deterministic route tests."""
+
+    async def astream_events(
+        self,
+        prompt: str,
+        *,
+        thread_id: str,
+        stream_mode: tuple[str, ...],
+    ) -> AsyncIterator[dict]:
+        yield {
+            "type": "messages",
+            "data": (
+                type("Chunk", (), {"content": f"hello {prompt}", "tool_call_chunks": []})(),
+                {"langgraph_node": "model"},
+            ),
+        }
+        yield {
+            "type": "updates",
+            "data": {
+                "model": {
+                    "messages": [
+                        type(
+                            "Message",
+                            (),
+                            {
+                                "name": "demo_agent",
+                                "content": "final",
+                                "tool_calls": [],
+                            },
+                        )()
+                    ]
+                }
+            },
+        }
 
 
-# ── Service streaming test ────────────────────────────────────────────────────
+class FailingStreamingAgent:
+    """Fake agent that raises mid-stream."""
 
-async def fake_iter_events(messages):
-    yield {"type": "message_start", "message_id": "msg1"}
-    yield {"type": "text_start", "text_id": "t1"}
-    yield {"type": "text_delta", "text_id": "t1", "content": "Hi"}
-    yield {"type": "text_delta", "text_id": "t1", "content": " there!"}
-    yield {"type": "text_end", "text_id": "t1"}
-    yield {"type": "message_end", "metadata": {}}
+    async def astream_events(
+        self,
+        prompt: str,
+        *,
+        thread_id: str,
+        stream_mode: tuple[str, ...],
+    ) -> AsyncIterator[dict]:
+        yield {
+            "type": "messages",
+            "data": (
+                type("Chunk", (), {"content": "before"})(),
+                {"langgraph_node": "model"},
+            ),
+        }
+        raise RuntimeError("boom")
+
+
+def _sse_data_parts(body: str) -> list[dict | str]:
+    """Extract data payloads from an SSE stream."""
+    parts: list[dict | str] = []
+    for line in body.splitlines():
+        if not line.startswith("data: "):
+            continue
+        value = line.removeprefix("data: ")
+        if value == "[DONE]":
+            parts.append(value)
+        else:
+            parts.append(json.loads(value))
+    return parts
 
 
 @pytest.mark.asyncio
-async def test_chat_service_stream_yields_sse_and_done():
-    from src.services.chat_service import ChatService
-
-    conv_id = uuid.uuid4()
-    request = UserMessageRequest(
-        conversationId=str(conv_id), userId="u1", userMessage="hello"
+async def test_app_startup_warms_orchestrator_agent(
+    monkeypatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Application startup should initialize the cached chat agent."""
+    calls: list[str] = []
+    fake_agent = SimpleNamespace(
+        config=SimpleNamespace(name="Orchestrator", model="fake-model"),
+        tools=[],
     )
 
-    mock_session = AsyncMock()
-    mock_session.__aenter__ = AsyncMock(return_value=mock_session)
-    mock_session.__aexit__ = AsyncMock(return_value=False)
-    mock_session.add = MagicMock()
-    mock_session.flush = AsyncMock()
-    mock_session.commit = AsyncMock()
+    def warm_agent() -> SimpleNamespace:
+        calls.append("warm")
+        return fake_agent
 
-    mock_conv = MagicMock()
-    mock_conv.id = conv_id
+    monkeypatch.setattr("src.main.warm_orchestrator_agent", warm_agent)
+    caplog.set_level(logging.INFO)
+    app = create_app()
 
-    execute_count = 0
-
-    async def mock_execute(stmt, *args, **kwargs):
-        nonlocal execute_count
-        execute_count += 1
-        result = MagicMock()
-        if execute_count == 1:
-            # _validate_conversation
-            result.scalar_one_or_none.return_value = mock_conv
-        elif execute_count == 2:
-            # _load_history
-            result.scalars.return_value.all.return_value = []
-        else:
-            result.rowcount = 1
-        return result
-
-    mock_session.execute = mock_execute
-
-    async def mock_refresh(obj):
+    async with app.router.lifespan_context(app):
         pass
 
-    mock_session.refresh = mock_refresh
+    assert calls == ["warm"]
+    assert "Application startup started" in caplog.text
+    assert "Orchestrator agent warmed name=Orchestrator model=str tools=0" in caplog.text
+    assert "Application startup complete" in caplog.text
+    assert "Application shutdown complete" in caplog.text
 
-    mock_agent = MagicMock()
-    mock_agent.iter_events = fake_iter_events
 
-    chunks = []
+@pytest.mark.asyncio
+async def test_chat_streams_agent_events() -> None:
+    """The chat route should stream normalized agent events."""
+    app = create_app()
+    app.dependency_overrides[get_chat_agent] = lambda: FakeStreamingAgent()
 
-    with (
-        patch("src.services.chat_service.async_session", return_value=mock_session),
-        patch("src.services.chat_service.EchoAgent", return_value=mock_agent),
-        patch("src.services.chat_service.ConversationService") as MockConvSvc,
-        patch("src.services.chat_service.stream_registry") as mock_registry,
-    ):
-        MockConvSvc.return_value.update_conversation_status = AsyncMock()
-        mock_registry.register = AsyncMock()
-        mock_registry.is_cancelled = MagicMock(return_value=False)
-        mock_registry.publish = AsyncMock()
-        mock_registry.mark_done = AsyncMock()
-        mock_registry.unregister = AsyncMock()
-        service = ChatService(request)
-        async for chunk in service.stream():
-            chunks.append(chunk)
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        response = await client.post("/chat", json={"user_message": "world", "thread_id": "t1"})
 
-    assert chunks[-1] == "data: [DONE]\n\n"
-    text_deltas = [
-        json.loads(c.removeprefix("data: ").strip())
-        for c in chunks
-        if '"text-delta"' in c
+    body = response.text
+    parts = _sse_data_parts(body)
+
+    assert response.status_code == 200
+    assert response.headers["x-vercel-ai-ui-message-stream"] == "v1"
+    assert parts[0] == {"type": "start", "messageId": "t1"}
+    assert {"type": "text-start", "id": "text-1"} in parts
+    assert {"type": "text-delta", "id": "text-1", "delta": "hello world"} in parts
+    assert {"type": "text-end", "id": "text-1"} in parts
+    assert {"type": "finish"} in parts
+    assert parts[-1] == "[DONE]"
+    assert any(isinstance(part, dict) and part["type"] == "data-agent-update" for part in parts)
+
+
+@pytest.mark.asyncio
+async def test_chat_streams_errors() -> None:
+    """The chat route should emit an SSE error event for stream failures."""
+    app = create_app()
+    app.dependency_overrides[get_chat_agent] = lambda: FailingStreamingAgent()
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        response = await client.post("/chat", json={"user_message": "world"})
+
+    body = response.text
+    parts = _sse_data_parts(body)
+    error_parts = [part for part in parts if isinstance(part, dict) and part.get("type") == "error"]
+
+    assert response.status_code == 200
+    assert error_parts == [
+        {
+            "type": "error",
+            "errorText": "chat stream failed",
+            "data": {
+                "status": 500,
+                "message": "chat stream failed",
+                "error_tag": "chat_stream_failed",
+            },
+        }
     ]
-    assert [td["delta"] for td in text_deltas] == ["Hi", " there!"]
+    assert {"type": "finish"} in parts
+    assert parts[-1] == "[DONE]"
+    assert {
+        "type": "text-delta",
+        "id": "text-1",
+        "delta": "before",
+    } in parts
+    assert "boom" not in body
 
 
-# ── Route tests ───────────────────────────────────────────────────────────────
+@pytest.mark.asyncio
+async def test_chat_rejects_blank_message(caplog: pytest.LogCaptureFixture) -> None:
+    """Blank messages should fail before opening the stream."""
+    app = create_app()
 
-async def minimal_stream():
-    yield 'data: {"type": "start", "messageId": "m1"}\n\n'
-    yield 'data: {"type": "text-start", "id": "t1"}\n\n'
-    yield 'data: {"type": "text-delta", "id": "t1", "delta": "hi"}\n\n'
-    yield 'data: {"type": "text-end", "id": "t1"}\n\n'
-    yield 'data: {"type": "finish", "messageMetadata": {}}\n\n'
-    yield "data: [DONE]\n\n"
+    caplog.set_level(logging.INFO)
 
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        response = await client.post("/chat", json={"user_message": "   "})
 
-def test_chat_endpoint_streams_sse():
-    from fastapi.testclient import TestClient
-    from src.main import app
-
-    mock_service = MagicMock()
-    mock_service.stream = minimal_stream
-
-    with (
-        patch("src.routes.chat.ChatService", return_value=mock_service),
-        patch("src.routes.chat.add_heartbeat_to_stream", side_effect=lambda g, **kw: g),
-    ):
-        client = TestClient(app)
-        response = client.post(
-            "/chat",
-            json={
-                "conversationId": str(uuid.uuid4()),
-                "userId": "u1",
-                "userMessage": "hello",
-            },
-        )
-
-    assert response.status_code == 200
-    assert "text/event-stream" in response.headers["content-type"]
-    assert "text-delta" in response.text
-    assert "[DONE]" in response.text
+    assert response.status_code == 422
+    assert response.json() == {
+        "status": 422,
+        "message": "user_message cannot be blank",
+        "error_tag": "blank_user_message",
+    }
+    assert "error.status=422" in caplog.text
+    assert "error.message=user_message cannot be blank" in caplog.text
+    assert "error.error_tag=blank_user_message" in caplog.text
+    assert "error response generated" in caplog.text
 
 
-def test_chat_endpoint_accepts_camelcase_body():
-    from fastapi.testclient import TestClient
-    from src.main import app
+@pytest.mark.asyncio
+async def test_chat_request_validation_uses_standard_error_response() -> None:
+    """Pydantic validation errors should use the client-facing error contract."""
+    app = create_app()
 
-    mock_service = MagicMock()
-    mock_service.stream = minimal_stream
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        response = await client.post("/chat", json={})
 
-    with (
-        patch("src.routes.chat.ChatService", return_value=mock_service),
-        patch("src.routes.chat.add_heartbeat_to_stream", side_effect=lambda g, **kw: g),
-    ):
-        client = TestClient(app)
-        # All keys in camelCase (as the FE sends them)
-        response = client.post(
-            "/chat",
-            json={
-                "conversationId": str(uuid.uuid4()),
-                "userId": "u1",
-                "userMessage": "test message",
-                "userMessageTimestamp": 1234567890,
-                "attachments": [],
-            },
-        )
-
-    assert response.status_code == 200
+    assert response.status_code == 422
+    assert response.json() == {
+        "status": 422,
+        "message": "request validation failed",
+        "error_tag": "request_validation_error",
+    }
 
 
-def test_cancel_response_with_active_stream():
-    from fastapi.testclient import TestClient
-    from src.main import app
-    from src.utils.stream_registry import stream_registry
+def test_chat_error_response_schema_is_referenced_in_openapi() -> None:
+    """The chat OpenAPI docs should expose the standard error response schema."""
+    app = create_app()
 
-    cid = str(uuid.uuid4())
+    schema = app.openapi()
 
-    with patch.object(stream_registry, "cancel", new=AsyncMock(return_value=True)):
-        client = TestClient(app)
-        response = client.post(
-            "/conversation/cancel-response",
-            json={
-                "responseId": "r1",
-                "userMessageRequest": {
-                    "conversationId": cid,
-                    "userId": "u1",
-                    "userMessage": "hi",
-                },
-            },
-        )
-
-    assert response.status_code == 200
-    assert "cancel" in response.json()["detail"].lower()
-
-
-def test_cancel_response_no_active_stream():
-    from fastapi.testclient import TestClient
-    from src.main import app
-    from src.utils.stream_registry import stream_registry
-
-    cid = str(uuid.uuid4())
-
-    with patch.object(stream_registry, "cancel", new=AsyncMock(return_value=False)):
-        client = TestClient(app)
-        response = client.post(
-            "/conversation/cancel-response",
-            json={
-                "responseId": "r1",
-                "userMessageRequest": {"conversationId": cid, "userId": "u1", "userMessage": "hi"},
-            },
-        )
-
-    assert response.status_code == 200
-    assert "no active stream" in response.json()["detail"].lower()
-
-
-def test_resume_stream_not_streaming_returns_finalized():
-    from fastapi.testclient import TestClient
-    from src.main import app
-    from src.schema.conversation import ConversationStatus
-
-    cid = str(uuid.uuid4())
-
-    with patch("src.routes.chat.ConversationService") as MockSvc:
-        MockSvc.return_value.get_conversation_status = AsyncMock(
-            return_value=int(ConversationStatus.ACTIVE)
-        )
-        client = TestClient(app)
-        response = client.get(f"/chat/resume-stream/{cid}")
-
-    assert response.status_code == 200
-    assert "text/event-stream" in response.headers["content-type"]
-    assert "already_finalized" in response.text
+    chat_422_response = schema["paths"]["/chat"]["post"]["responses"]["422"]
+    assert json.dumps(chat_422_response)
+    assert "ChatErrorResponse" in json.dumps(chat_422_response)

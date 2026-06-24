@@ -1,0 +1,112 @@
+data: {"type": "start", "messageId": "user-123"}
+
+data: {"type": "data-tool-call-chunk", "data": {"node": "model", "tool_call_chunks": [{"name": "get_demo_context", "args": "", "id": "call_iPuvVyxxRKOnLfP5n0g6CEsr", "index": 0, "type": "tool_call_chunk"}], "metadata": {"ls_integration": "langchain_chat_model", "lc_agent_name": "chat_agent", "thread_id": "user-123", "langgraph_step": 6, "langgraph_node": "model", "langgraph_triggers": ["branch:to:model"], "langgraph_path": ["__pregel_pull", "model"], "langgraph_checkpoint_ns": "model:ddfcfaa7-4f78-9be4-0556-e9431f88ee05", "checkpoint_ns": "model:ddfcfaa7-4f78-9be4-0556-e9431f88ee05", "ls_provider": "openai", "ls_model_name": "gpt-4.1-mini", "ls_model_type": "chat", "ls_temperature": null}}}
+
+data: {"type": "data-tool-call-chunk", "data": {"node": "model", "tool_call_chunks": [{"name": null, "args": "{\"", "id": null, "index": 0, "type": "tool_call_chunk"}], "metadata": {"ls_integration": "langchain_chat_model", "lc_agent_name": "chat_agent", "thread_id": "user-123", "langgraph_step": 6, "langgraph_node": "model", "langgraph_triggers": ["branch:to:model"], "langgraph_path": ["__pregel_pull", "model"], "langgraph_checkpoint_ns": "model:ddfcfaa7-4f78-9be4-0556-e9431f88ee05", "checkpoint_ns": "model:ddfcfaa7-4f78-9be4-0556-e9431f88ee05", "ls_provider": "openai", "ls_model_name": "gpt-4.1-mini", "ls_model_type": "chat", "ls_temperature": null}}}
+
+data: {"type": "data-tool-call-chunk", "data": {"node": "model", "tool_call_chunks": [{"name": null, "args": "topic", "id": null, "index": 0, "type": "tool_call_chunk"}], "metadata": {"ls_integration": "langchain_chat_model", "lc_agent_name": "chat_agent", "thread_id": "user-123", "langgraph_step": 6, "langgraph_node": "model", "langgraph_triggers": ["branch:to:model"], "langgraph_path": ["__pregel_pull", "model"], "langgraph_checkpoint_ns": "model:ddfcfaa7-4f78-9be4-0556-e9431f88ee05", "checkpoint_ns": "model:ddfcfaa7-4f78-9be4-0556-e9431f88ee05", "ls_provider": "openai", "ls_model_name": "gpt-4.1-mini", "ls_model_type": "chat", "ls_temperature": null}}}
+
+data: {"type": "data-tool-call-chunk", "data": {"node": "model", "tool_call_chunks": [{"name": null, "args": "\":\"", "id": null, "index": 0, "type": "tool_call_chunk"}], "metadata": {"ls_integration": "langchain_chat_model", "lc_agent_name": "chat_agent", "thread_id": "user-123", "langgraph_step": 6, "langgraph_node": "model", "langgraph_triggers": ["branch:to:model"], "langgraph_path": ["__pregel_pull", "model"], "langgraph_checkpoint_ns": "model:ddfcfaa7-4f78-9be4-0556-e9431f88ee05", "checkpoint_ns": "model:ddfcfaa7-4f78-9be4-0556-e9431f88ee05", "ls_provider": "openai", "ls_model_name": "gpt-4.1-mini", "ls_model_type": "chat", "ls_temperature": null}}}
+
+data: {"type": "data-tool-call-chunk", "data": {"node": "model", "tool_call_chunks": [{"name": null, "args": "planning", "id": null, "index": 0, "type": "tool_call_chunk"}], "metadata": {"ls_integration": "langchain_chat_model", "lc_agent_name": "chat_agent", "thread_id": "user-123", "langgraph_step": 6, "langgraph_node": "model", "langgraph_triggers": ["branch:to:model"], "langgraph_path": ["__pregel_pull", "model"], "langgraph_checkpoint_ns": "model:ddfcfaa7-4f78-9be4-0556-e9431f88ee05", "checkpoint_ns": "model:ddfcfaa7-4f78-9be4-0556-e9431f88ee05", "ls_provider": "openai", "ls_model_name": "gpt-4.1-mini", "ls_model_type": "chat", "ls_temperature": null}}}
+
+data: {"type": "data-tool-call-chunk", "data": {"node": "model", "tool_call_chunks": [{"name": null, "args": "\"}", "id": null, "index": 0, "type": "tool_call_chunk"}], "metadata": {"ls_integration": "langchain_chat_model", "lc_agent_name": "chat_agent", "thread_id": "user-123", "langgraph_step": 6, "langgraph_node": "model", "langgraph_triggers": ["branch:to:model"], "langgraph_path": ["__pregel_pull", "model"], "langgraph_checkpoint_ns": "model:ddfcfaa7-4f78-9be4-0556-e9431f88ee05", "checkpoint_ns": "model:ddfcfaa7-4f78-9be4-0556-e9431f88ee05", "ls_provider": "openai", "ls_model_name": "gpt-4.1-mini", "ls_model_type": "chat", "ls_temperature": null}}}
+
+data: {"type": "tool-input-available", "toolCallId": "call_iPuvVyxxRKOnLfP5n0g6CEsr", "toolName": "get_demo_context", "input": {"topic": "planning"}}
+
+data: {"type": "data-agent-update", "data": {"node": "tools", "content": "Demo context for planning: stream model tokens, tool calls, tool results, agent step updates, and terminal errors as separate events.", "metadata": {"ls_integration": "langchain_create_agent", "lc_agent_name": "chat_agent", "thread_id": "user-123", "langgraph_step": 7, "langgraph_node": "tools", "langgraph_triggers": ["__pregel_push"], "langgraph_path": ["__pregel_push", 0, false], "langgraph_checkpoint_ns": "tools:515fcf94-d899-dc49-58bf-1a993efd2b20"}}}
+
+data: {"type": "data-agent-update", "data": {"step": "tools", "name": "get_demo_context", "content": "Demo context for planning: stream model tokens, tool calls, tool results, agent step updates, and terminal errors as separate events.", "tool_calls": []}}
+
+data: {"type": "text-start", "id": "text-1"}
+
+data: {"type": "text-delta", "id": "text-1", "delta": "The"}
+
+data: {"type": "text-delta", "id": "text-1", "delta": " demo"}
+
+data: {"type": "text-delta", "id": "text-1", "delta": " context"}
+
+data: {"type": "text-delta", "id": "text-1", "delta": " for"}
+
+data: {"type": "text-delta", "id": "text-1", "delta": " planning"}
+
+data: {"type": "text-delta", "id": "text-1", "delta": " includes"}
+
+data: {"type": "text-delta", "id": "text-1", "delta": " concepts"}
+
+data: {"type": "text-delta", "id": "text-1", "delta": " like"}
+
+data: {"type": "text-delta", "id": "text-1", "delta": " streaming"}
+
+data: {"type": "text-delta", "id": "text-1", "delta": " model"}
+
+data: {"type": "text-delta", "id": "text-1", "delta": " tokens"}
+
+data: {"type": "text-delta", "id": "text-1", "delta": ","}
+
+data: {"type": "text-delta", "id": "text-1", "delta": " tool"}
+
+data: {"type": "text-delta", "id": "text-1", "delta": " calls"}
+
+data: {"type": "text-delta", "id": "text-1", "delta": ","}
+
+data: {"type": "text-delta", "id": "text-1", "delta": " and"}
+
+data: {"type": "text-delta", "id": "text-1", "delta": " step"}
+
+data: {"type": "text-delta", "id": "text-1", "delta": " updates"}
+
+data: {"type": "text-delta", "id": "text-1", "delta": "."}
+
+data: {"type": "text-delta", "id": "text-1", "delta": " For"}
+
+data: {"type": "text-delta", "id": "text-1", "delta": " your"}
+
+data: {"type": "text-delta", "id": "text-1", "delta": " day"}
+
+data: {"type": "text-delta", "id": "text-1", "delta": " planning"}
+
+data: {"type": "text-delta", "id": "text-1", "delta": ","}
+
+data: {"type": "text-delta", "id": "text-1", "delta": " could"}
+
+data: {"type": "text-delta", "id": "text-1", "delta": " you"}
+
+data: {"type": "text-delta", "id": "text-1", "delta": " share"}
+
+data: {"type": "text-delta", "id": "text-1", "delta": " your"}
+
+data: {"type": "text-delta", "id": "text-1", "delta": " key"}
+
+data: {"type": "text-delta", "id": "text-1", "delta": " tasks"}
+
+data: {"type": "text-delta", "id": "text-1", "delta": " or"}
+
+data: {"type": "text-delta", "id": "text-1", "delta": " goals"}
+
+data: {"type": "text-delta", "id": "text-1", "delta": "?"}
+
+data: {"type": "text-delta", "id": "text-1", "delta": " This"}
+
+data: {"type": "text-delta", "id": "text-1", "delta": " will"}
+
+data: {"type": "text-delta", "id": "text-1", "delta": " help"}
+
+data: {"type": "text-delta", "id": "text-1", "delta": " me"}
+
+data: {"type": "text-delta", "id": "text-1", "delta": " assist"}
+
+data: {"type": "text-delta", "id": "text-1", "delta": " you"}
+
+data: {"type": "text-delta", "id": "text-1", "delta": " better"}
+
+data: {"type": "text-delta", "id": "text-1", "delta": "."}
+
+data: {"type": "data-agent-update", "data": {"step": "model", "name": "chat_agent", "content": "The demo context for planning includes concepts like streaming model tokens, tool calls, and step updates. For your day planning, could you share your key tasks or goals? This will help me assist you better.", "tool_calls": []}}
+
+data: {"type": "text-end", "id": "text-1"}
+
+data: {"type": "finish"}
+
+data: [DONE]
+

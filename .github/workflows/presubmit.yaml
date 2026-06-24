@@ -1,0 +1,49 @@
+name: Presubmit Checks
+
+on:
+  pull_request:
+    branches:
+      - main
+      - release
+
+jobs:
+  lint-and-test:
+    name: Lint & Test
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v3
+        with:
+          version: "latest"
+
+      - name: Install dependencies
+        run: uv sync --all-groups
+
+      - name: Create .env file
+        run: |
+          cat > .env <<EOF
+          APP_NAME=relivo-be-server
+          VERSION=0.1.0
+          ENVIRONMENT=test
+          DATABASE_URL=postgresql+asyncpg://postgres:postgres@localhost:5432/relivo
+          OPENAI_API_KEY=sk-test-key
+          OPENAI_MODEL=gpt-4o-mini
+          EOF
+
+      - name: Run ruff lint
+        run: uv run ruff check .
+
+      - name: Run ruff format check
+        run: uv run ruff format --check .
+
+      - name: Run tests
+        run: uv run pytest tests/ -v

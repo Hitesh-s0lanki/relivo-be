@@ -1,14 +1,5 @@
-from fastapi import APIRouter
-from src.app_config import settings
-from src.schema.health import HealthResponse
+"""Compatibility route module for health checks."""
 
-router = APIRouter(prefix="/health", tags=["health"])
+from src.controllers.health_controller import HealthResponse, health, router
 
-
-@router.get("", response_model=HealthResponse)
-def get_health() -> HealthResponse:
-    return HealthResponse(
-        status="ok",
-        version=settings.version,
-        environment=settings.environment,
-    )
+__all__ = ["HealthResponse", "health", "router"]

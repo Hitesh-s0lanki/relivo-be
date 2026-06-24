@@ -1,207 +1,216 @@
-"""Service layer for chat business logic."""
+"""Chat streaming service backed by the LangChain agent harness."""
 
+import asyncio
+import json
 import logging
-import uuid
-from collections.abc import AsyncGenerator
+from collections.abc import AsyncIterator
+from typing import Any
 
-from langchain_core.messages import AIMessage, HumanMessage
-from sqlalchemy import select, update
-from sqlalchemy.ext.asyncio import AsyncSession
-
-from src.agents.base_agent import BaseAgent
-from src.agents.echo_agent import EchoAgent
-from src.db.database import async_session
-from src.db.models import Conversation, Message, ToolCall
-from src.schema.chat import UserMessageRequest
-from src.schema.conversation import ConversationStatus
-from src.services.conversation_service import ConversationService
-from src.utils.data_protocol import StreamProtocolBuilder
-from src.utils.stream_registry import stream_registry
+from src.agents import BaseAgent
+from src.schemas.chat import ChatRequest
+from src.utils.error_response import build_error_response, log_error_response
 
 logger = logging.getLogger(__name__)
+FAST_GREETING_RESPONSES = {
+    "hello": "Hello! How can I help?",
+    "hi": "Hi! How can I help?",
+    "hey": "Hey! How can I help?",
+}
 
 
 class ChatService:
-    """Handles streaming chat with cancel and resume support."""
+    """Coordinates chat requests and converts agent output to SSE events."""
 
-    def __init__(self, request: UserMessageRequest) -> None:
-        self.request = request
-        self.agent: BaseAgent = EchoAgent()
-        self._conversation_service = ConversationService()
+    def __init__(self, agent: BaseAgent) -> None:
+        """Initialize the service with an agent dependency."""
+        self.agent = agent
 
-    async def stream(self) -> AsyncGenerator[str, None]:
-        """
-        Streaming pipeline:
-        Phase 1 — Validate conversation + DB setup.
-        Phase 2 — Run agent; publish each SSE chunk; check cancel on each event.
-        Phase 3 — Finalise DB records + reset conversation status to ACTIVE.
-        """
-        # ── Phase 1 ──────────────────────────────────────────────────────────
-        try:
-            async with async_session() as db:
-                conversation_id, lc_messages, assistant_message_id = await self._setup(db)
-        except ValueError as exc:
-            yield StreamProtocolBuilder.error_part(str(exc), "not_found").to_sse()
-            yield StreamProtocolBuilder.terminate_stream().to_sse()
+    async def stream_chat(self, request: ChatRequest) -> AsyncIterator[str]:
+        """Stream a chat response as Vercel AI SDK UI message stream frames."""
+        text_started = False
+
+        yield self._sse_data({"type": "start", "messageId": request.thread_id})
+
+        if response := self._fast_response(request.user_message):
+            yield self._sse_data({"type": "text-start", "id": "text-1"})
+            yield self._sse_data({"type": "text-delta", "id": "text-1", "delta": response})
+            yield self._sse_data({"type": "text-end", "id": "text-1"})
+            yield self._sse_data({"type": "finish"})
+            yield self._sse_data("[DONE]")
             return
 
-        conv_id_str = str(conversation_id)
-
-        await self._conversation_service.update_conversation_status(
-            conv_id_str, int(ConversationStatus.STREAMING)
-        )
-        await stream_registry.register(conv_id_str)
-
-        # ── Phase 2 ──────────────────────────────────────────────────────────
-        content_parts: list[str] = []
-        tool_events: list[dict] = []
-        final_status = "failed"
-
         try:
-            async for ev in self.agent.iter_events(lc_messages):
-                if stream_registry.is_cancelled(conv_id_str):
-                    break
-
-                if ev["type"] == "text_delta":
-                    content_parts.append(ev["content"])
-                elif ev["type"] == "tool_end":
-                    tool_events.append(ev)
-
-                sse = BaseAgent.event_to_sse(ev)
-                if sse is not None:
-                    await stream_registry.publish(conv_id_str, sse)
-                    yield sse
-
-            if not stream_registry.is_cancelled(conv_id_str):
-                final_status = "completed"
-
-            terminate = StreamProtocolBuilder.terminate_stream().to_sse()
-            await stream_registry.publish(conv_id_str, terminate)
-            yield terminate
-
-        except Exception:
-            logger.exception("Error during agent stream for user %s", self.request.user_id)
-            err = StreamProtocolBuilder.error_part(
-                "An error occurred. Please try again.", "stream_error"
-            ).to_sse()
-            terminate = StreamProtocolBuilder.terminate_stream().to_sse()
-            await stream_registry.publish(conv_id_str, err)
-            await stream_registry.publish(conv_id_str, terminate)
-            yield err
-            yield terminate
-
+            async for chunk in self.agent.astream_events(
+                request.user_message,
+                thread_id=request.thread_id,
+                stream_mode=request.stream_mode,
+            ):
+                for part in self._normalize_agent_chunk(chunk):
+                    if part["type"] == "text-delta" and not text_started:
+                        yield self._sse_data({"type": "text-start", "id": "text-1"})
+                        text_started = True
+                    yield self._sse_data(part)
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:
+            error = build_error_response(
+                status=500,
+                message="chat stream failed",
+                error_tag="chat_stream_failed",
+            )
+            log_error_response(logger, error, detail=str(exc), exc=exc)
+            yield self._sse_data(
+                {
+                    "type": "error",
+                    "errorText": error.message,
+                    "data": error.model_dump(),
+                }
+            )
         finally:
-            await stream_registry.mark_done(conv_id_str)
-            await stream_registry.unregister(conv_id_str)
-            try:
-                await self._finalize(
-                    conversation_id=conversation_id,
-                    assistant_message_id=assistant_message_id,
-                    content="".join(content_parts) if final_status == "completed" else None,
-                    tool_events=tool_events if final_status == "completed" else [],
-                    status=final_status,
-                )
-            except Exception:
-                logger.exception("Failed to finalize message %s", assistant_message_id)
-            await self._conversation_service.update_conversation_status(
-                conv_id_str, int(ConversationStatus.ACTIVE)
-            )
+            if text_started:
+                yield self._sse_data({"type": "text-end", "id": "text-1"})
+            yield self._sse_data({"type": "finish"})
+            yield self._sse_data("[DONE]")
 
-    async def _setup(self, db: AsyncSession) -> tuple[uuid.UUID, list, uuid.UUID]:
-        """Validate conversation, load history, insert user + assistant placeholder rows."""
-        conversation_id = await self._validate_conversation(db)
-        history = await self._load_history(db, conversation_id)
-        next_seq = len(history) + 1
+    @classmethod
+    def _normalize_agent_chunk(cls, chunk: Any) -> list[dict[str, Any]]:
+        if not isinstance(chunk, dict):
+            return [{"type": "data-agent-event", "data": {"value": str(chunk)}}]
 
-        user_msg = Message(
-            conversation_id=conversation_id,
-            role="user",
-            content=self.request.user_message,
-            status="completed",
-            sequence_number=next_seq,
-        )
-        db.add(user_msg)
+        event_type = chunk.get("type")
+        if event_type == "messages":
+            return cls._normalize_message_chunk(chunk)
 
-        assistant_msg = Message(
-            conversation_id=conversation_id,
-            role="assistant",
-            content=None,
-            status="streaming",
-            sequence_number=next_seq + 1,
-        )
-        db.add(assistant_msg)
-        await db.flush()
-        await db.commit()
+        if event_type == "updates":
+            return [
+                part
+                for payload in cls._normalize_update_chunk(chunk)
+                for part in cls._update_payload_to_parts(payload)
+            ]
 
-        lc_messages = self._to_lc_messages(history) + [
-            HumanMessage(content=self.request.user_message)
+        return [
+            {
+                "type": "data-agent-event",
+                "data": {"type": event_type, "data": cls._json_safe(chunk.get("data"))},
+            }
         ]
-        return conversation_id, lc_messages, assistant_msg.id
 
-    async def _validate_conversation(self, db: AsyncSession) -> uuid.UUID:
-        """Ensure conversation exists and belongs to the requesting user."""
-        conv_uuid = uuid.UUID(self.request.conversation_id)
-        result = await db.execute(
-            select(Conversation).where(
-                Conversation.id == conv_uuid,
-                Conversation.user_id == self.request.user_id,
-            )
-        )
-        conv = result.scalar_one_or_none()
-        if conv is None:
-            raise ValueError(
-                f"Conversation {self.request.conversation_id} not found "
-                f"for user {self.request.user_id}"
-            )
-        return conv.id
+    @classmethod
+    def _normalize_message_chunk(cls, chunk: dict[str, Any]) -> list[dict[str, Any]]:
+        data = chunk.get("data")
+        if not isinstance(data, tuple) or len(data) < 2:
+            return []
 
-    async def _load_history(
-        self, db: AsyncSession, conversation_id: uuid.UUID
-    ) -> list[Message]:
-        result = await db.execute(
-            select(Message)
-            .where(
-                Message.conversation_id == conversation_id,
-                Message.status == "completed",
-                Message.role.in_(["user", "assistant"]),
+        message_chunk, metadata = data
+        node = metadata.get("langgraph_node") if isinstance(metadata, dict) else None
+        content = cls._content_to_text(getattr(message_chunk, "content", ""))
+        tool_call_chunks = cls._json_safe(getattr(message_chunk, "tool_call_chunks", []))
+        parts: list[dict[str, Any]] = []
+
+        if tool_call_chunks:
+            parts.append(
+                {
+                    "type": "data-tool-call-chunk",
+                    "data": {
+                        "node": node,
+                        "tool_call_chunks": tool_call_chunks,
+                        "metadata": cls._json_safe(metadata),
+                    },
+                }
             )
-            .order_by(Message.sequence_number)
-        )
-        return list(result.scalars().all())
+
+        if content and node == "model":
+            parts.append({"type": "text-delta", "id": "text-1", "delta": content})
+        elif content:
+            parts.append(
+                {
+                    "type": "data-agent-update",
+                    "data": {
+                        "node": node,
+                        "content": content,
+                        "metadata": cls._json_safe(metadata),
+                    },
+                }
+            )
+
+        return parts
+
+    @classmethod
+    def _normalize_update_chunk(cls, chunk: dict[str, Any]) -> list[dict[str, Any]]:
+        data = chunk.get("data")
+        if not isinstance(data, dict):
+            return [{"step": "unknown", "data": cls._json_safe(data)}]
+
+        updates: list[dict[str, Any]] = []
+        for step, step_data in data.items():
+            messages = step_data.get("messages", []) if isinstance(step_data, dict) else []
+            latest = messages[-1] if messages else None
+            updates.append(
+                {
+                    "step": step,
+                    "name": getattr(latest, "name", None),
+                    "content": cls._content_to_text(getattr(latest, "content", "")),
+                    "tool_calls": cls._json_safe(getattr(latest, "tool_calls", [])),
+                }
+            )
+
+        return updates
+
+    @classmethod
+    def _update_payload_to_parts(cls, payload: dict[str, Any]) -> list[dict[str, Any]]:
+        tool_calls = payload.get("tool_calls", [])
+        if tool_calls:
+            return [
+                {
+                    "type": "tool-input-available",
+                    "toolCallId": str(tool_call.get("id", "")),
+                    "toolName": str(tool_call.get("name", "")),
+                    "input": cls._json_safe(tool_call.get("args", {})),
+                }
+                for tool_call in tool_calls
+                if isinstance(tool_call, dict)
+            ]
+
+        if payload.get("step") == "tools":
+            return [
+                {
+                    "type": "data-agent-update",
+                    "data": payload,
+                }
+            ]
+
+        return [{"type": "data-agent-update", "data": payload}]
 
     @staticmethod
-    def _to_lc_messages(history: list[Message]) -> list:
-        lc: list = []
-        for msg in history:
-            if msg.role == "user":
-                lc.append(HumanMessage(content=msg.content or ""))
-            elif msg.role == "assistant":
-                lc.append(AIMessage(content=msg.content or ""))
-        return lc
+    def _content_to_text(content: Any) -> str:
+        if isinstance(content, str):
+            return content
+        if not isinstance(content, list):
+            return ""
 
-    async def _finalize(
-        self,
-        conversation_id: uuid.UUID,
-        assistant_message_id: uuid.UUID,
-        content: str | None,
-        tool_events: list[dict],
-        status: str,
-    ) -> None:
-        """Update assistant message + tool calls; reset conversation status to ACTIVE."""
-        async with async_session() as db:
-            await db.execute(
-                update(Message)
-                .where(Message.id == assistant_message_id)
-                .values(content=content, status=status)
-            )
-            for ev in tool_events:
-                db.add(
-                    ToolCall(
-                        message_id=assistant_message_id,
-                        tool_call_id=ev["tool_call_id"],
-                        tool_name=ev.get("tool_name", ""),
-                        tool_input=ev.get("tool_input", {}),
-                        tool_output=ev.get("tool_output", {}),
-                    )
-                )
-            await db.commit()
+        parts: list[str] = []
+        for item in content:
+            if isinstance(item, str):
+                parts.append(item)
+            elif isinstance(item, dict) and item.get("type") == "text":
+                parts.append(str(item.get("text", "")))
+        return "".join(parts)
+
+    @staticmethod
+    def _json_safe(value: Any) -> Any:
+        try:
+            json.dumps(value)
+            return value
+        except TypeError:
+            return str(value)
+
+    @staticmethod
+    def _fast_response(user_message: str) -> str | None:
+        normalized = user_message.strip().lower().rstrip("!.")
+        return FAST_GREETING_RESPONSES.get(normalized)
+
+    @staticmethod
+    def _sse_data(data: dict[str, Any] | str) -> str:
+        if isinstance(data, str):
+            return f"data: {data}\n\n"
+        return f"data: {json.dumps(data, ensure_ascii=False)}\n\n"

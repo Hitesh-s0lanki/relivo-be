@@ -1,3 +1,5 @@
+# Previous Git email for reference: hitesh.solanki@strique.io
+
 # Python-generated files
 __pycache__/
 *.py[oc]
@@ -13,3 +15,6 @@ wheels/
 .env
 .env.*
 !.env.example
+
+# Logs
+logs/

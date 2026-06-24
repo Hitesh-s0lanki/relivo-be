@@ -1,237 +1,367 @@
-"""Service layer for conversation business logic."""
+"""Service layer for conversation CRUD operations."""
 
-import logging
-import uuid
-from datetime import UTC, datetime
-
-from fastapi import HTTPException, status
 from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import selectinload
 
-from src.db.database import async_session
-from src.db.models import Conversation, Message
-from src.schema.chat import (
-    ConversationMessagesRequest,
-    ConversationMessagesResponse,
-    MessageRole,
-    MessageStatus,
-    TextPart,
-    UIMessage,
-    UIMessageMetadata,
-    UIMessagePart,
+from src.models import (
+    Conversation,
+    ConversationMessage,
+    ConversationMessageReasoning,
+    ConversationMessageToolCall,
 )
-from src.schema.conversation import (
+from src.models.common import utc_now
+from src.schemas.conversation import (
     ConversationCreate,
-    ConversationList,
-    ConversationSchema,
-    ConversationStatus,
     ConversationUpdate,
-    GetAllConversationsRequest,
+    MessageCreate,
+    MessageUpdate,
+    ReasoningCreate,
+    ReasoningUpdate,
+    ToolCallCreate,
+    ToolCallUpdate,
 )
 
-logger = logging.getLogger(__name__)
+
+class ConversationNotFoundError(Exception):
+    """Raised when a conversation cannot be found."""
+
+
+class MessageNotFoundError(Exception):
+    """Raised when a conversation message cannot be found."""
+
+
+class ToolCallNotFoundError(Exception):
+    """Raised when a message tool call cannot be found."""
+
+
+class ReasoningNotFoundError(Exception):
+    """Raised when a message reasoning entry cannot be found."""
 
 
 class ConversationService:
-    """Handles all conversation CRUD and message retrieval."""
+    """CRUD service for conversations and messages."""
 
-    async def create_conversation(self, request: ConversationCreate) -> ConversationSchema:
-        """Create a new conversation and persist it."""
-        conv = Conversation(
-            user_id=request.user_id,
-            title=request.title,
-            status=int(ConversationStatus.ACTIVE),
+    def __init__(self, session: AsyncSession) -> None:
+        """Initialize the service with a database session."""
+        self.session = session
+
+    async def list_conversations(self, user_id: str | None = None) -> list[Conversation]:
+        """List all conversations."""
+        statement = select(Conversation)
+        if user_id:
+            statement = statement.where(Conversation.user_id == user_id)
+        result = await self.session.execute(statement.order_by(Conversation.updated_at.desc()))
+        return list(result.scalars().all())
+
+    async def create_conversation(self, payload: ConversationCreate) -> Conversation:
+        """Create a conversation."""
+        conversation = Conversation(user_id=payload.user_id, title=payload.title)
+        self.session.add(conversation)
+        await self.session.commit()
+        await self.session.refresh(conversation)
+        return conversation
+
+    async def get_conversation(self, conversation_id: str) -> Conversation:
+        """Get a conversation by id."""
+        conversation = await self.session.get(Conversation, conversation_id)
+        if conversation is None:
+            raise ConversationNotFoundError(conversation_id)
+        return conversation
+
+    async def get_conversation_with_messages(self, conversation_id: str) -> Conversation:
+        """Get a conversation by id with messages loaded."""
+        result = await self.session.execute(
+            select(Conversation)
+            .where(Conversation.id == conversation_id)
+            .options(
+                selectinload(Conversation.messages).selectinload(ConversationMessage.tool_calls),
+                selectinload(Conversation.messages).selectinload(
+                    ConversationMessage.reasoning_entries
+                ),
+            )
         )
-        async with async_session() as db:
-            db.add(conv)
-            await db.commit()
-            await db.refresh(conv)
-        return self._to_schema(conv)
+        conversation = result.scalar_one_or_none()
+        if conversation is None:
+            raise ConversationNotFoundError(conversation_id)
+        return conversation
 
-    async def get_conversation(self, conversation_id: str, user_id: str) -> ConversationSchema:
-        """Fetch a single conversation by ID, scoped to user_id."""
-        if not conversation_id:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST, detail="Conversation ID is required."
-            )
-        if not user_id:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST, detail="User ID is required."
-            )
-        conv_uuid = uuid.UUID(conversation_id)
-        async with async_session() as db:
-            result = await db.execute(
-                select(Conversation).filter(
-                    Conversation.id == conv_uuid,
-                    Conversation.user_id == user_id,
-                    Conversation.status != int(ConversationStatus.DELETED),
-                )
-            )
-            conv = result.scalars().first()
-        if not conv:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail=f"Conversation {conversation_id} not found.",
-            )
-        return self._to_schema(conv)
+    async def update_conversation(
+        self,
+        conversation_id: str,
+        payload: ConversationUpdate,
+    ) -> Conversation:
+        """Update a conversation."""
+        conversation = await self.get_conversation(conversation_id)
+        update_data = payload.model_dump(exclude_unset=True)
+        for field, value in update_data.items():
+            setattr(conversation, field, value)
 
-    async def get_all_conversations(
-        self, request: GetAllConversationsRequest
-    ) -> ConversationList:
-        """Return all non-deleted conversations for a user, newest first."""
-        if not request.user_id:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST, detail="User ID is required."
-            )
-        async with async_session() as db:
-            result = await db.execute(
-                select(Conversation)
-                .filter(
-                    Conversation.user_id == request.user_id,
-                    Conversation.status != int(ConversationStatus.DELETED),
-                )
-                .order_by(Conversation.updated_at.desc())
-            )
-            convs = result.scalars().all()
-        return ConversationList(conversations=[self._to_schema(c) for c in convs])
+        await self.session.commit()
+        await self.session.refresh(conversation)
+        return conversation
 
-    async def update_conversation(self, request: ConversationUpdate) -> ConversationSchema:
-        """Update mutable fields on an existing conversation."""
-        if not request.id:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST, detail="Conversation ID is required."
-            )
-        conv_uuid = uuid.UUID(request.id)
-        async with async_session() as db:
-            result = await db.execute(
-                select(Conversation).filter(Conversation.id == conv_uuid)
-            )
-            conv = result.scalars().first()
-            if not conv:
-                raise HTTPException(
-                    status_code=status.HTTP_404_NOT_FOUND,
-                    detail=f"Conversation {request.id} not found.",
-                )
-            if request.title is not None:
-                conv.title = request.title
-            if request.status is not None:
-                conv.status = int(request.status)
-            await db.commit()
-            await db.refresh(conv)
-        return self._to_schema(conv)
+    async def delete_conversation(self, conversation_id: str) -> None:
+        """Delete a conversation."""
+        conversation = await self.get_conversation(conversation_id)
+        await self.session.delete(conversation)
+        await self.session.commit()
 
-    async def delete_conversation(self, conversation_id: str, user_id: str) -> None:
-        """Soft-delete a conversation (sets status to DELETED)."""
-        if not conversation_id:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST, detail="Conversation ID is required."
+    async def list_messages(self, conversation_id: str) -> list[ConversationMessage]:
+        """List messages for a conversation."""
+        await self.get_conversation(conversation_id)
+        result = await self.session.execute(
+            select(ConversationMessage)
+            .where(ConversationMessage.conversation_id == conversation_id)
+            .options(
+                selectinload(ConversationMessage.tool_calls),
+                selectinload(ConversationMessage.reasoning_entries),
             )
-        conv_uuid = uuid.UUID(conversation_id)
-        async with async_session() as db:
-            result = await db.execute(
-                select(Conversation).filter(
-                    Conversation.id == conv_uuid,
-                    Conversation.user_id == user_id,
-                )
-            )
-            conv = result.scalars().first()
-            if not conv:
-                raise HTTPException(
-                    status_code=status.HTTP_404_NOT_FOUND,
-                    detail=f"Conversation {conversation_id} not found.",
-                )
-            conv.status = int(ConversationStatus.DELETED)
-            await db.commit()
+            .order_by(ConversationMessage.created_at.asc())
+        )
+        return list(result.scalars().all())
 
-    async def update_conversation_status(self, conversation_id: str, new_status: int) -> None:
-        """Update conversation status (used internally by ChatService)."""
-        conv_uuid = uuid.UUID(conversation_id)
-        async with async_session() as db:
-            result = await db.execute(
-                select(Conversation).filter(Conversation.id == conv_uuid)
-            )
-            conv = result.scalars().first()
-            if conv:
-                conv.status = new_status
-                await db.commit()
+    async def create_message(
+        self,
+        conversation_id: str,
+        payload: MessageCreate,
+    ) -> ConversationMessage:
+        """Create a message in a conversation."""
+        conversation = await self.get_conversation(conversation_id)
+        message = ConversationMessage(
+            conversation_id=conversation_id,
+            role=payload.role,
+            text=payload.text,
+            message_metadata=payload.metadata,
+            tool_calls=[
+                self._tool_call_from_payload(tool_call) for tool_call in payload.tool_calls
+            ],
+            reasoning_entries=[
+                self._reasoning_from_payload(reasoning) for reasoning in payload.reasoning_entries
+            ],
+        )
+        conversation.updated_at = utc_now()
+        self.session.add(message)
+        await self.session.commit()
+        return await self.get_message(conversation_id, message.id)
 
-    async def get_conversation_status(self, conversation_id: str) -> int:
-        """Return the raw status int for a conversation (DELETED=4 if not found)."""
-        conv_uuid = uuid.UUID(conversation_id)
-        async with async_session() as db:
-            result = await db.execute(
-                select(Conversation).filter(Conversation.id == conv_uuid)
+    async def get_message(
+        self,
+        conversation_id: str,
+        message_id: str,
+    ) -> ConversationMessage:
+        """Get a message by id inside a conversation."""
+        result = await self.session.execute(
+            select(ConversationMessage)
+            .where(
+                ConversationMessage.id == message_id,
+                ConversationMessage.conversation_id == conversation_id,
             )
-            conv = result.scalars().first()
-        return conv.status if conv else int(ConversationStatus.DELETED)
-
-    async def get_messages(
-        self, request: ConversationMessagesRequest
-    ) -> ConversationMessagesResponse:
-        """Return paginated completed messages for a conversation as UIMessage objects."""
-        if not request.conversation_id:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST, detail="Conversation ID is required."
+            .options(
+                selectinload(ConversationMessage.tool_calls),
+                selectinload(ConversationMessage.reasoning_entries),
             )
-        conv_uuid = uuid.UUID(request.conversation_id)
-        limit = min(request.limit or 50, 100)
-        offset = request.offset or 0
+        )
+        message = result.scalar_one_or_none()
+        if message is None:
+            raise MessageNotFoundError(message_id)
+        return message
 
-        async with async_session() as db:
-            conv_result = await db.execute(
-                select(Conversation).filter(
-                    Conversation.id == conv_uuid,
-                    Conversation.user_id == request.user_id,
-                )
+    async def update_message(
+        self,
+        conversation_id: str,
+        message_id: str,
+        payload: MessageUpdate,
+    ) -> ConversationMessage:
+        """Update a message."""
+        message = await self.get_message(conversation_id, message_id)
+        update_data = payload.model_dump(exclude_unset=True)
+        if "metadata" in update_data:
+            update_data["message_metadata"] = update_data.pop("metadata")
+
+        for field, value in update_data.items():
+            setattr(message, field, value)
+
+        await self.touch_conversation(conversation_id)
+        await self.session.commit()
+        return await self.get_message(conversation_id, message_id)
+
+    async def delete_message(self, conversation_id: str, message_id: str) -> None:
+        """Delete a message."""
+        message = await self.get_message(conversation_id, message_id)
+        await self.touch_conversation(conversation_id)
+        await self.session.delete(message)
+        await self.session.commit()
+
+    async def list_tool_calls(
+        self,
+        conversation_id: str,
+        message_id: str,
+    ) -> list[ConversationMessageToolCall]:
+        """List tool calls for a message."""
+        message = await self.get_message(conversation_id, message_id)
+        return message.tool_calls
+
+    async def create_tool_call(
+        self,
+        conversation_id: str,
+        message_id: str,
+        payload: ToolCallCreate,
+    ) -> ConversationMessageToolCall:
+        """Create a tool call for a message."""
+        await self.get_message(conversation_id, message_id)
+        tool_call = self._tool_call_from_payload(payload)
+        tool_call.message_id = message_id
+        self.session.add(tool_call)
+        await self.touch_conversation(conversation_id)
+        await self.session.commit()
+        await self.session.refresh(tool_call)
+        return tool_call
+
+    async def get_tool_call(
+        self,
+        conversation_id: str,
+        message_id: str,
+        tool_call_id: str,
+    ) -> ConversationMessageToolCall:
+        """Get a tool call by id."""
+        await self.get_message(conversation_id, message_id)
+        result = await self.session.execute(
+            select(ConversationMessageToolCall).where(
+                ConversationMessageToolCall.id == tool_call_id,
+                ConversationMessageToolCall.message_id == message_id,
             )
-            if not conv_result.scalars().first():
-                raise HTTPException(
-                    status_code=status.HTTP_404_NOT_FOUND,
-                    detail=f"Conversation {request.conversation_id} not found.",
-                )
-            msgs_result = await db.execute(
-                select(Message)
-                .filter(
-                    Message.conversation_id == conv_uuid,
-                    Message.status == "completed",
-                )
-                .order_by(Message.sequence_number)
-                .offset(offset)
-                .limit(limit + 1)
+        )
+        tool_call = result.scalar_one_or_none()
+        if tool_call is None:
+            raise ToolCallNotFoundError(tool_call_id)
+        return tool_call
+
+    async def update_tool_call(
+        self,
+        conversation_id: str,
+        message_id: str,
+        tool_call_id: str,
+        payload: ToolCallUpdate,
+    ) -> ConversationMessageToolCall:
+        """Update a tool call."""
+        tool_call = await self.get_tool_call(conversation_id, message_id, tool_call_id)
+        update_data = payload.model_dump(exclude_unset=True)
+        for field, value in update_data.items():
+            setattr(tool_call, field, value)
+        await self.touch_conversation(conversation_id)
+        await self.session.commit()
+        await self.session.refresh(tool_call)
+        return tool_call
+
+    async def delete_tool_call(
+        self,
+        conversation_id: str,
+        message_id: str,
+        tool_call_id: str,
+    ) -> None:
+        """Delete a tool call."""
+        tool_call = await self.get_tool_call(conversation_id, message_id, tool_call_id)
+        await self.touch_conversation(conversation_id)
+        await self.session.delete(tool_call)
+        await self.session.commit()
+
+    async def list_reasoning_entries(
+        self,
+        conversation_id: str,
+        message_id: str,
+    ) -> list[ConversationMessageReasoning]:
+        """List reasoning entries for a message."""
+        message = await self.get_message(conversation_id, message_id)
+        return message.reasoning_entries
+
+    async def create_reasoning_entry(
+        self,
+        conversation_id: str,
+        message_id: str,
+        payload: ReasoningCreate,
+    ) -> ConversationMessageReasoning:
+        """Create a reasoning entry for a message."""
+        await self.get_message(conversation_id, message_id)
+        reasoning = self._reasoning_from_payload(payload)
+        reasoning.message_id = message_id
+        self.session.add(reasoning)
+        await self.touch_conversation(conversation_id)
+        await self.session.commit()
+        await self.session.refresh(reasoning)
+        return reasoning
+
+    async def get_reasoning_entry(
+        self,
+        conversation_id: str,
+        message_id: str,
+        reasoning_id: str,
+    ) -> ConversationMessageReasoning:
+        """Get a reasoning entry by id."""
+        await self.get_message(conversation_id, message_id)
+        result = await self.session.execute(
+            select(ConversationMessageReasoning).where(
+                ConversationMessageReasoning.id == reasoning_id,
+                ConversationMessageReasoning.message_id == message_id,
             )
-            messages = list(msgs_result.scalars().all())
+        )
+        reasoning = result.scalar_one_or_none()
+        if reasoning is None:
+            raise ReasoningNotFoundError(reasoning_id)
+        return reasoning
 
-        has_more = len(messages) > limit
-        if has_more:
-            messages = messages[:limit]
+    async def update_reasoning_entry(
+        self,
+        conversation_id: str,
+        message_id: str,
+        reasoning_id: str,
+        payload: ReasoningUpdate,
+    ) -> ConversationMessageReasoning:
+        """Update a reasoning entry."""
+        reasoning = await self.get_reasoning_entry(conversation_id, message_id, reasoning_id)
+        update_data = payload.model_dump(exclude_unset=True)
+        if "metadata" in update_data:
+            update_data["reasoning_metadata"] = update_data.pop("metadata")
+        for field, value in update_data.items():
+            setattr(reasoning, field, value)
+        await self.touch_conversation(conversation_id)
+        await self.session.commit()
+        await self.session.refresh(reasoning)
+        return reasoning
 
-        ui_messages = [self._message_to_ui(msg) for msg in messages]
-        return ConversationMessagesResponse(
-            messages=ui_messages,
-            hasMore=has_more,
-            nextOffset=offset + len(messages),
-            count=len(ui_messages),
+    async def delete_reasoning_entry(
+        self,
+        conversation_id: str,
+        message_id: str,
+        reasoning_id: str,
+    ) -> None:
+        """Delete a reasoning entry."""
+        reasoning = await self.get_reasoning_entry(conversation_id, message_id, reasoning_id)
+        await self.touch_conversation(conversation_id)
+        await self.session.delete(reasoning)
+        await self.session.commit()
+
+    async def touch_conversation(self, conversation_id: str) -> None:
+        """Update a conversation timestamp."""
+        conversation = await self.get_conversation(conversation_id)
+        conversation.updated_at = utc_now()
+
+    @staticmethod
+    def _tool_call_from_payload(payload: ToolCallCreate) -> ConversationMessageToolCall:
+        return ConversationMessageToolCall(
+            tool_call_id=payload.tool_call_id,
+            name=payload.name,
+            arguments=payload.arguments,
+            result=payload.result,
+            status=payload.status,
+            sequence=payload.sequence,
         )
 
-    def _message_to_ui(self, msg: Message) -> UIMessage:
-        """Convert a DB Message row to UIMessage format."""
-        role = MessageRole.USER if msg.role == "user" else MessageRole.ASSISTANT
-        parts = [UIMessagePart(text=TextPart(text=msg.content or "", state="done"))]
-        metadata = UIMessageMetadata(
-            createdAt=msg.created_at.isoformat() if msg.created_at else "",
-            tokens=0,
-        )
-        msg_status = (
-            MessageStatus.COMPLETED if msg.status == "completed" else MessageStatus.STREAMING
-        )
-        return UIMessage(id=str(msg.id), role=role, parts=parts, metadata=metadata, status=msg_status)
-
-    def _to_schema(self, conv: Conversation) -> ConversationSchema:
-        """Convert a DB Conversation row to ConversationSchema."""
-        return ConversationSchema(
-            id=str(conv.id),
-            userId=conv.user_id,
-            title=conv.title,
-            status=ConversationStatus(conv.status if conv.status is not None else 0),
-            createdAt=conv.created_at.isoformat() if conv.created_at else "",
-            updatedAt=conv.updated_at.isoformat() if conv.updated_at else "",
+    @staticmethod
+    def _reasoning_from_payload(payload: ReasoningCreate) -> ConversationMessageReasoning:
+        return ConversationMessageReasoning(
+            content=payload.content,
+            summary=payload.summary,
+            reasoning_metadata=payload.metadata,
+            sequence=payload.sequence,
         )
