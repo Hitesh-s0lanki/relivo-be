@@ -1,5 +1,8 @@
 """Tests for chat service configuration."""
 
+from types import SimpleNamespace
+from uuid import uuid4
+
 import pytest
 
 from src.agents.orchestrator import (
@@ -47,6 +50,77 @@ class StreamingAgent:
         }
 
 
+class ToolStreamingAgent:
+    """Agent stub that emits one tool call, one tool result, and final text."""
+
+    async def astream_events(self, *_args, **_kwargs):
+        yield {
+            "type": "updates",
+            "data": {
+                "model": {
+                    "messages": [
+                        SimpleNamespace(
+                            name="Orchestrator",
+                            content="",
+                            tool_calls=[
+                                {
+                                    "id": "call_firecrawl",
+                                    "name": "firecrawl_search",
+                                    "args": {"query": "Firecrawl MCP Server"},
+                                }
+                            ],
+                        )
+                    ]
+                }
+            },
+        }
+        yield {
+            "type": "updates",
+            "data": {
+                "tools": {
+                    "messages": [
+                        SimpleNamespace(
+                            name="firecrawl_search",
+                            content='{"success": true, "data": {"web": []}}',
+                            tool_calls=[],
+                        )
+                    ]
+                }
+            },
+        }
+        yield {
+            "type": "messages",
+            "data": (
+                type("MessageChunk", (), {"content": "Done.", "tool_call_chunks": []})(),
+                {"langgraph_node": "model"},
+            ),
+        }
+
+
+class FakeConversationPersistence:
+    """Fake conversation service that records created messages."""
+
+    def __init__(self) -> None:
+        """Initialize captured message storage."""
+        self.created_messages = []
+        self.created_tool_calls = []
+        self.messages = []
+
+    async def create_message(self, conversation_id, payload):
+        """Capture the requested persisted message."""
+        self.created_messages.append((conversation_id, payload))
+        return SimpleNamespace(id="message-id")
+
+    async def list_messages(self, _conversation_id):
+        """Return fake conversation messages."""
+        return self.messages
+
+    async def create_tool_call(self, conversation_id, message_id, payload):
+        """Capture the requested persisted tool call."""
+        self.created_tool_calls.append((conversation_id, message_id, payload))
+        return SimpleNamespace(id="tool-call-id")
+
+
 def test_build_openai_chat_model_uses_reasoning_defaults(monkeypatch) -> None:
     """The configured OpenAI model should default to reasoning settings."""
     monkeypatch.delenv("RELIVO_CHAT_MODEL", raising=False)
@@ -67,7 +141,7 @@ def test_orchestrator_prompt_is_loaded_from_markdown() -> None:
 
     assert ORCHESTRATOR_AGENT_NAME == "Orchestrator"
     assert "You are Orchestrator" in prompt
-    assert "Use tools only when they add useful context" in prompt
+    assert "Use tools only when they improve accuracy" in prompt
 
 
 def test_build_openai_chat_model_uses_env_overrides(monkeypatch) -> None:
@@ -180,3 +254,78 @@ async def test_stream_chat_uses_agent_for_non_greeting() -> None:
 
     assert agent.called is True
     assert 'data: {"type": "text-delta", "id": "text-1", "delta": "Planned"}\n\n' in events
+
+
+@pytest.mark.asyncio
+async def test_stream_chat_persists_tool_calls_for_conversation_thread() -> None:
+    """Tool calls from a chat stream should be saved for UUID conversation threads."""
+    conversation_id = str(uuid4())
+    persistence = FakeConversationPersistence()
+    service = ChatService(ToolStreamingAgent(), persistence)
+
+    events = [
+        event
+        async for event in service.stream_chat(
+            ChatRequest(user_message="search docs", thread_id=conversation_id)
+        )
+    ]
+
+    assert any('"toolName": "firecrawl_search"' in event for event in events)
+    assert len(persistence.created_messages) == 1
+
+    saved_conversation_id, payload = persistence.created_messages[0]
+    assert saved_conversation_id == conversation_id
+    assert payload.role == "agent"
+    assert payload.text == "Done."
+    assert payload.metadata == {"source": "chat_stream", "thread_id": conversation_id}
+    assert len(payload.tool_calls) == 1
+    assert payload.tool_calls[0].tool_call_id == "call_firecrawl"
+    assert payload.tool_calls[0].name == "firecrawl_search"
+    assert payload.tool_calls[0].arguments == {"query": "Firecrawl MCP Server"}
+    assert payload.tool_calls[0].result == {"success": True, "data": {"web": []}}
+    assert payload.tool_calls[0].status == "completed"
+
+
+@pytest.mark.asyncio
+async def test_stream_chat_skips_tool_persistence_for_non_conversation_thread() -> None:
+    """Non-UUID thread ids should continue streaming without DB persistence."""
+    persistence = FakeConversationPersistence()
+    service = ChatService(ToolStreamingAgent(), persistence)
+
+    events = [
+        event
+        async for event in service.stream_chat(
+            ChatRequest(user_message="search docs", thread_id="ad-hoc-thread")
+        )
+    ]
+
+    assert any('"toolName": "firecrawl_search"' in event for event in events)
+    assert persistence.created_messages == []
+
+
+@pytest.mark.asyncio
+async def test_stream_chat_attaches_tool_calls_to_existing_agent_message() -> None:
+    """Tool calls should attach to an already-saved matching assistant message."""
+    conversation_id = str(uuid4())
+    persistence = FakeConversationPersistence()
+    persistence.messages = [
+        SimpleNamespace(id="existing-agent-message", role="agent", text="Done.", tool_calls=[])
+    ]
+    service = ChatService(ToolStreamingAgent(), persistence)
+
+    events = [
+        event
+        async for event in service.stream_chat(
+            ChatRequest(user_message="search docs", thread_id=conversation_id)
+        )
+    ]
+
+    assert any('"toolName": "firecrawl_search"' in event for event in events)
+    assert persistence.created_messages == []
+    assert len(persistence.created_tool_calls) == 1
+
+    saved_conversation_id, message_id, payload = persistence.created_tool_calls[0]
+    assert saved_conversation_id == conversation_id
+    assert message_id == "existing-agent-message"
+    assert payload.name == "firecrawl_search"
+    assert payload.result == {"success": True, "data": {"web": []}}

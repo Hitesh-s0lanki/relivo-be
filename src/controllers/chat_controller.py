@@ -1,23 +1,29 @@
 """Chat HTTP controller."""
 
-import logging
+from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import StreamingResponse
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.agents import BaseAgent, get_chat_agent
+from src.database import get_db_session
 from src.schemas.chat import ChatErrorResponse, ChatRequest
 from src.services.chat_service import ChatService
-from src.utils.error_response import build_error_response, log_error_response
+from src.services.conversation_service import ConversationService
+from src.utils.error_response import build_error_response
 
 router = APIRouter()
 ChatAgentDependency = Depends(get_chat_agent)
-logger = logging.getLogger(__name__)
 
 
-def get_chat_service(agent: BaseAgent = ChatAgentDependency) -> ChatService:
+def get_chat_service(
+    agent: BaseAgent = ChatAgentDependency,
+    session: Annotated[AsyncSession | None, Depends(get_db_session)] = None,
+) -> ChatService:
     """Resolve the chat service dependency."""
-    return ChatService(agent)
+    conversation_service = ConversationService(session) if session is not None else None
+    return ChatService(agent, conversation_service)
 
 
 ChatServiceDependency = Depends(get_chat_service)
@@ -111,7 +117,6 @@ async def chat(
             message="user_message cannot be blank",
             error_tag="blank_user_message",
         )
-        log_error_response(logger, error)
         raise HTTPException(status_code=422, detail=error.model_dump())
 
     return StreamingResponse(
