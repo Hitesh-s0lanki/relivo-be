@@ -23,6 +23,7 @@ from src.services.user_file_service import (
     S3StorageError,
     UploadTooLargeError,
     UserFileNotFoundError,
+    UserFileObjectNotFoundError,
     UserFileService,
 )
 from src.utils.error_response import build_error_response
@@ -122,6 +123,8 @@ async def create_ai_attachment_presigned_url(
         attachment = await service.create_attachment_response(metadata)
     except UserFileNotFoundError as exc:
         raise _http_error(404, "file not found", "file_not_found") from exc
+    except UserFileObjectNotFoundError as exc:
+        raise _http_error(404, "file object not found", "file_object_not_found") from exc
     except S3ConfigurationError as exc:
         raise _http_error(500, "S3 file storage is not configured", "s3_not_configured") from exc
     except S3StorageError as exc:
@@ -202,6 +205,8 @@ async def create_user_file_download_url(
         metadata, url = await service.create_download_url(file_id)
     except UserFileNotFoundError as exc:
         raise _http_error(404, "file not found", "file_not_found") from exc
+    except UserFileObjectNotFoundError as exc:
+        raise _http_error(404, "file object not found", "file_object_not_found") from exc
     except S3ConfigurationError as exc:
         raise _http_error(500, "S3 file storage is not configured", "s3_not_configured") from exc
     except S3StorageError as exc:

@@ -60,6 +60,10 @@ class UserFileNotFoundError(Exception):
     """Raised when a user file cannot be found."""
 
 
+class UserFileObjectNotFoundError(Exception):
+    """Raised when file metadata exists but the S3 object is missing."""
+
+
 class EmptyUploadError(Exception):
     """Raised when an uploaded file has no content."""
 
@@ -182,8 +186,12 @@ class UserFileService:
 
         try:
             await self._upload_object(contents, s3_key, content_type)
+            await self._ensure_object_exists(self.settings.bucket, s3_key)
         except (BotoCoreError, ClientError) as exc:
             raise S3StorageError("failed to upload file to S3") from exc
+        except UserFileObjectNotFoundError as exc:
+            await self._delete_uploaded_object_best_effort(s3_key)
+            raise S3StorageError("uploaded file is not readable from S3") from exc
 
         self.session.add(metadata)
         try:
@@ -236,6 +244,7 @@ class UserFileService:
         """Read a stored file from S3 and return a base64 data URL."""
         metadata = await self.get_file(file_id)
         try:
+            await self._ensure_object_exists(metadata.s3_bucket, metadata.s3_key)
             response = await anyio.to_thread.run_sync(
                 partial(
                     (await self._s3_client_for_bucket()).get_object,
@@ -244,7 +253,13 @@ class UserFileService:
                 )
             )
             contents = await anyio.to_thread.run_sync(response["Body"].read)
-        except (BotoCoreError, ClientError, KeyError) as exc:
+        except UserFileObjectNotFoundError:
+            raise
+        except ClientError as exc:
+            if _is_missing_s3_object_error(exc):
+                raise UserFileObjectNotFoundError(file_id) from exc
+            raise S3StorageError("failed to read file from S3") from exc
+        except (BotoCoreError, KeyError) as exc:
             raise S3StorageError("failed to read file from S3") from exc
 
         media_type = metadata.content_type or "application/octet-stream"
@@ -262,6 +277,7 @@ class UserFileService:
             params["ResponseContentType"] = metadata.content_type
 
         try:
+            await self._ensure_object_exists(metadata.s3_bucket, metadata.s3_key)
             url = await anyio.to_thread.run_sync(
                 partial(
                     (await self._s3_client_for_bucket()).generate_presigned_url,
@@ -270,6 +286,8 @@ class UserFileService:
                     ExpiresIn=self.settings.presigned_expires_seconds,
                 )
             )
+        except UserFileObjectNotFoundError:
+            raise
         except (BotoCoreError, ClientError) as exc:
             raise S3StorageError("failed to create S3 download URL") from exc
 
@@ -350,15 +368,29 @@ class UserFileService:
         if self.settings.kms_key_id:
             extra_args["SSEKMSKeyId"] = self.settings.kms_key_id
 
-            await anyio.to_thread.run_sync(
-                partial(
-                    (await self._s3_client_for_bucket()).upload_fileobj,
-                    BytesIO(contents),
-                    self.settings.bucket,
-                    s3_key,
+        await anyio.to_thread.run_sync(
+            partial(
+                (await self._s3_client_for_bucket()).upload_fileobj,
+                BytesIO(contents),
+                self.settings.bucket,
+                s3_key,
                 ExtraArgs=extra_args,
             )
         )
+
+    async def _ensure_object_exists(self, bucket: str, s3_key: str) -> None:
+        try:
+            await anyio.to_thread.run_sync(
+                partial(
+                    (await self._s3_client_for_bucket()).head_object,
+                    Bucket=bucket,
+                    Key=s3_key,
+                )
+            )
+        except ClientError as exc:
+            if _is_missing_s3_object_error(exc):
+                raise UserFileObjectNotFoundError(s3_key) from exc
+            raise
 
     async def _delete_uploaded_object_best_effort(self, s3_key: str) -> None:
         try:
@@ -405,3 +437,10 @@ def _normalize_bucket_location(location_constraint: str | None) -> str:
     if location_constraint == "EU":
         return "eu-west-1"
     return location_constraint
+
+
+def _is_missing_s3_object_error(exc: ClientError) -> bool:
+    error = exc.response.get("Error", {})
+    code = str(error.get("Code", ""))
+    status = exc.response.get("ResponseMetadata", {}).get("HTTPStatusCode")
+    return code in {"404", "NoSuchKey", "NotFound"} or status == 404

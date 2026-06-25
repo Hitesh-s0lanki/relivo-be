@@ -14,7 +14,12 @@ from src.schemas.chat import ChatRequest
 from src.schemas.conversation import MessageCreate, ToolCallCreate
 from src.schemas.user_file import AttachmentInput
 from src.services.conversation_service import ConversationNotFoundError, ConversationService
-from src.services.user_file_service import UserFileNotFoundError, UserFileService
+from src.services.user_file_service import (
+    S3StorageError,
+    UserFileNotFoundError,
+    UserFileObjectNotFoundError,
+    UserFileService,
+)
 from src.utils.error_response import build_error_response, log_error_response
 
 logger = logging.getLogger(__name__)
@@ -425,7 +430,7 @@ class ChatService:
 
         try:
             _metadata, data_url = await self.user_file_service.create_data_url(file_id)
-        except UserFileNotFoundError:
+        except (S3StorageError, UserFileNotFoundError, UserFileObjectNotFoundError):
             return attachment.url
 
         return data_url

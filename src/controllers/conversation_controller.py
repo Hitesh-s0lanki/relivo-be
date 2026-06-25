@@ -32,6 +32,7 @@ from src.services.user_file_service import (
     S3ConfigurationError,
     S3StorageError,
     UserFileNotFoundError,
+    UserFileObjectNotFoundError,
     UserFileService,
 )
 from src.utils.error_response import build_error_response
@@ -434,7 +435,12 @@ async def _hydrate_attachment_url(
 
     try:
         metadata, url = await file_service.create_download_url(file_id)
-    except (S3ConfigurationError, S3StorageError, UserFileNotFoundError):
+    except (
+        S3ConfigurationError,
+        S3StorageError,
+        UserFileNotFoundError,
+        UserFileObjectNotFoundError,
+    ):
         return attachment
 
     return {
