@@ -22,6 +22,14 @@ python src/main.py
 
 Server runs at `http://localhost:8000`
 
+## Database
+
+Apply the SQL migrations before using conversation or file upload APIs:
+
+```bash
+uv run python scripts/apply_migrations.py
+```
+
 ## Environment Variables
 
 The app loads from a `.env` file or environment variables. All have defaults:
