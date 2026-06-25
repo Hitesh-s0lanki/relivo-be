@@ -11,6 +11,7 @@ from src.database import get_db_session
 from src.schemas.chat import ChatErrorResponse, ChatRequest
 from src.services.chat_service import ChatService
 from src.services.conversation_service import ConversationService
+from src.services.user_file_service import UserFileService
 from src.utils.error_response import build_error_response
 
 router = APIRouter()
@@ -23,7 +24,8 @@ def get_chat_service(
 ) -> ChatService:
     """Resolve the chat service dependency."""
     conversation_service = ConversationService(session) if session is not None else None
-    return ChatService(agent, conversation_service)
+    user_file_service = UserFileService(session) if session is not None else None
+    return ChatService(agent, conversation_service, user_file_service)
 
 
 ChatServiceDependency = Depends(get_chat_service)
@@ -111,11 +113,11 @@ async def chat(
     service: ChatService = ChatServiceDependency,
 ) -> StreamingResponse:
     """Stream a chat response as Server-Sent Events."""
-    if not request.user_message.strip():
+    if not request.user_message.strip() and not request.attachments:
         error = build_error_response(
             status=422,
-            message="user_message cannot be blank",
-            error_tag="blank_user_message",
+            message="user_message or attachments is required",
+            error_tag="empty_chat_message",
         )
         raise HTTPException(status_code=422, detail=error.model_dump())
 

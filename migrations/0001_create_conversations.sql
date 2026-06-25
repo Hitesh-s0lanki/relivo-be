@@ -1,4 +1,4 @@
-CREATE TABLE conversations (
+CREATE TABLE IF NOT EXISTS conversations (
     id VARCHAR(36) PRIMARY KEY,
     user_id VARCHAR(200) NOT NULL,
     title VARCHAR(200),
@@ -6,7 +6,7 @@ CREATE TABLE conversations (
     updated_at TIMESTAMP WITH TIME ZONE NOT NULL
 );
 
-CREATE TABLE conversation_messages (
+CREATE TABLE IF NOT EXISTS conversation_messages (
     id VARCHAR(36) PRIMARY KEY,
     conversation_id VARCHAR(36) NOT NULL REFERENCES conversations(id) ON DELETE CASCADE,
     role VARCHAR(20) NOT NULL,
@@ -16,7 +16,7 @@ CREATE TABLE conversation_messages (
     updated_at TIMESTAMP WITH TIME ZONE NOT NULL
 );
 
-CREATE TABLE conversation_message_tool_calls (
+CREATE TABLE IF NOT EXISTS conversation_message_tool_calls (
     id VARCHAR(36) PRIMARY KEY,
     message_id VARCHAR(36) NOT NULL REFERENCES conversation_messages(id) ON DELETE CASCADE,
     tool_call_id VARCHAR(200),
@@ -29,7 +29,7 @@ CREATE TABLE conversation_message_tool_calls (
     updated_at TIMESTAMP WITH TIME ZONE NOT NULL
 );
 
-CREATE TABLE conversation_message_reasoning_entries (
+CREATE TABLE IF NOT EXISTS conversation_message_reasoning_entries (
     id VARCHAR(36) PRIMARY KEY,
     message_id VARCHAR(36) NOT NULL REFERENCES conversation_messages(id) ON DELETE CASCADE,
     content TEXT NOT NULL,
@@ -40,26 +40,26 @@ CREATE TABLE conversation_message_reasoning_entries (
     updated_at TIMESTAMP WITH TIME ZONE NOT NULL
 );
 
-CREATE INDEX ix_conversation_messages_conversation_id
+CREATE INDEX IF NOT EXISTS ix_conversation_messages_conversation_id
     ON conversation_messages(conversation_id);
 
-CREATE INDEX ix_conversations_user_id
+CREATE INDEX IF NOT EXISTS ix_conversations_user_id
     ON conversations(user_id);
 
-CREATE INDEX ix_conversation_messages_role
+CREATE INDEX IF NOT EXISTS ix_conversation_messages_role
     ON conversation_messages(role);
 
-CREATE INDEX ix_conversation_message_tool_calls_message_id
+CREATE INDEX IF NOT EXISTS ix_conversation_message_tool_calls_message_id
     ON conversation_message_tool_calls(message_id);
 
-CREATE INDEX ix_conversation_message_tool_calls_tool_call_id
+CREATE INDEX IF NOT EXISTS ix_conversation_message_tool_calls_tool_call_id
     ON conversation_message_tool_calls(tool_call_id);
 
-CREATE INDEX ix_conversation_message_tool_calls_name
+CREATE INDEX IF NOT EXISTS ix_conversation_message_tool_calls_name
     ON conversation_message_tool_calls(name);
 
-CREATE INDEX ix_conversation_message_tool_calls_status
+CREATE INDEX IF NOT EXISTS ix_conversation_message_tool_calls_status
     ON conversation_message_tool_calls(status);
 
-CREATE INDEX ix_conversation_message_reasoning_entries_message_id
+CREATE INDEX IF NOT EXISTS ix_conversation_message_reasoning_entries_message_id
     ON conversation_message_reasoning_entries(message_id);

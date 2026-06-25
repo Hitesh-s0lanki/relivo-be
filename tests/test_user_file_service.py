@@ -4,6 +4,7 @@ from io import BytesIO
 from types import SimpleNamespace
 
 import pytest
+from botocore.exceptions import ClientError
 from fastapi import UploadFile
 from starlette.datastructures import Headers
 
@@ -11,7 +12,9 @@ from src.services.user_file_service import (
     EmptyUploadError,
     S3FileSettings,
     UploadTooLargeError,
+    UserFileObjectNotFoundError,
     UserFileService,
+    get_s3_file_settings,
 )
 
 
@@ -52,21 +55,26 @@ class FakeSession:
 class FakeS3Client:
     """S3 client double that records object operations."""
 
-    def __init__(self) -> None:
+    def __init__(self, region_name: str = "us-east-1") -> None:
         """Initialize empty call history."""
+        self.region_name = region_name
         self.uploads = []
         self.deletes = []
         self.presign_calls = []
+        self.objects = {}
+        self.location_constraint = region_name
 
     def upload_fileobj(self, fileobj, bucket: str, key: str, **kwargs) -> None:
+        body = fileobj.read()
         self.uploads.append(
             {
-                "body": fileobj.read(),
+                "body": body,
                 "bucket": bucket,
                 "key": key,
                 "extra_args": kwargs["ExtraArgs"],
             }
         )
+        self.objects[key] = body
 
     def delete_object(self, **kwargs) -> None:
         self.deletes.append({"bucket": kwargs["Bucket"], "key": kwargs["Key"]})
@@ -80,6 +88,31 @@ class FakeS3Client:
             }
         )
         return f"https://files.example.test/{kwargs['Params']['Key']}"
+
+    def get_object(self, **kwargs):
+        key = kwargs["Key"]
+        if key not in self.objects:
+            raise _missing_object_error(key)
+        return {"Body": BytesIO(self.objects[key])}
+
+    def get_bucket_location(self, **_kwargs):
+        return {"LocationConstraint": self.location_constraint}
+
+    def head_object(self, **kwargs):
+        key = kwargs["Key"]
+        if key not in self.objects:
+            raise _missing_object_error(key)
+        return {"ContentLength": len(self.objects[key])}
+
+
+def _missing_object_error(key: str) -> ClientError:
+    return ClientError(
+        {
+            "Error": {"Code": "NoSuchKey", "Message": "The specified key does not exist."},
+            "ResponseMetadata": {"HTTPStatusCode": 404},
+        },
+        f"head_object {key}",
+    )
 
 
 @pytest.fixture
@@ -104,6 +137,17 @@ def upload_file(filename: str, contents: bytes, content_type: str) -> UploadFile
         filename=filename,
         headers=Headers({"content-type": content_type}),
     )
+
+
+def test_s3_settings_use_app_region_as_default_client_region(monkeypatch) -> None:
+    """AWS_REGION remains the default S3 client region."""
+    monkeypatch.setenv("AWS_S3_BUCKET", "relivo.chat")
+    monkeypatch.setenv("AWS_REGION", "ap-south-1")
+
+    settings = get_s3_file_settings()
+
+    assert settings.bucket == "relivo.chat"
+    assert settings.region_name == "ap-south-1"
 
 
 @pytest.mark.asyncio
@@ -138,6 +182,41 @@ async def test_upload_file_stores_s3_object_and_metadata(settings: S3FileSetting
                 "Metadata": {"source": "relivo-be-server"},
                 "ServerSideEncryption": "aws:kms",
                 "SSEKMSKeyId": "kms-key",
+            },
+        }
+    ]
+
+
+@pytest.mark.asyncio
+async def test_upload_file_without_kms_still_uploads_object() -> None:
+    """Uploads should not depend on optional KMS settings."""
+    settings = S3FileSettings(
+        bucket="test-bucket",
+        region_name="us-east-1",
+        endpoint_url=None,
+        key_prefix="uploads",
+        presigned_expires_seconds=900,
+        max_upload_bytes=16,
+        server_side_encryption=None,
+        kms_key_id=None,
+    )
+    session = FakeSession()
+    s3_client = FakeS3Client()
+    service = UserFileService(session, settings=settings, s3_client=s3_client)
+
+    metadata = await service.upload_file(
+        user_id="user-123",
+        upload=upload_file("avatar.png", b"image", "image/png"),
+    )
+
+    assert s3_client.uploads == [
+        {
+            "body": b"image",
+            "bucket": "test-bucket",
+            "key": metadata.s3_key,
+            "extra_args": {
+                "ContentType": "image/png",
+                "Metadata": {"source": "relivo-be-server"},
             },
         }
     ]
@@ -207,6 +286,7 @@ async def test_create_download_url_uses_metadata_and_expiry(settings: S3FileSett
     )
     session = FakeSession(record)
     s3_client = FakeS3Client()
+    s3_client.objects[record.s3_key] = b"pdf"
     service = UserFileService(session, settings=settings, s3_client=s3_client)
 
     metadata, url = await service.create_download_url("file-id")
@@ -225,6 +305,139 @@ async def test_create_download_url_uses_metadata_and_expiry(settings: S3FileSett
             "expires_in": 900,
         }
     ]
+
+
+@pytest.mark.asyncio
+async def test_create_download_url_auto_detects_bucket_region(settings: S3FileSettings) -> None:
+    """Presigned URLs should use the bucket's detected region when it differs."""
+    settings = S3FileSettings(
+        bucket="test-bucket",
+        region_name="ap-south-1",
+        endpoint_url=None,
+        key_prefix="uploads",
+        presigned_expires_seconds=900,
+        max_upload_bytes=16,
+        server_side_encryption=None,
+        kms_key_id=None,
+    )
+    record = SimpleNamespace(
+        s3_bucket="test-bucket",
+        s3_key="uploads/users/user-123/file-id/report.pdf",
+        original_filename="report.pdf",
+        content_type="application/pdf",
+    )
+    clients: dict[str, FakeS3Client] = {}
+    session = FakeSession(record)
+    service = UserFileService(session, settings=settings)
+
+    def build_client(region_name: str) -> FakeS3Client:
+        if region_name in clients:
+            return clients[region_name]
+        client = FakeS3Client(region_name)
+        client.location_constraint = None if region_name == "ap-south-1" else region_name
+        clients[region_name] = client
+        return client
+
+    service._build_s3_client_for_region = build_client
+    clients["us-east-1"] = build_client("us-east-1")
+    clients["us-east-1"].objects[record.s3_key] = b"pdf"
+
+    _metadata, url = await service.create_download_url("file-id")
+
+    assert url == "https://files.example.test/uploads/users/user-123/file-id/report.pdf"
+    assert "us-east-1" in clients
+    assert clients["us-east-1"].presign_calls[0]["operation"] == "get_object"
+
+
+@pytest.mark.asyncio
+async def test_create_download_url_rejects_missing_s3_object(
+    settings: S3FileSettings,
+) -> None:
+    """Metadata without a matching S3 object should not produce a broken URL."""
+    record = SimpleNamespace(
+        s3_bucket="metadata-bucket",
+        s3_key="uploads/users/user-123/file-id/missing.pdf",
+        original_filename="missing.pdf",
+        content_type="application/pdf",
+    )
+    session = FakeSession(record)
+    s3_client = FakeS3Client()
+    service = UserFileService(session, settings=settings, s3_client=s3_client)
+
+    with pytest.raises(UserFileObjectNotFoundError):
+        await service.create_download_url("file-id")
+
+
+@pytest.mark.asyncio
+async def test_create_attachment_response_uses_presigned_url(settings: S3FileSettings) -> None:
+    """Attachment responses should expose frontend fields and the stored file id."""
+    record = SimpleNamespace(
+        id="file-id",
+        s3_bucket="metadata-bucket",
+        s3_key="uploads/users/user-123/file-id/avatar.png",
+        original_filename="avatar.png",
+        content_type="image/png",
+        size_bytes=123,
+    )
+    session = FakeSession(record)
+    s3_client = FakeS3Client()
+    s3_client.objects[record.s3_key] = b"image"
+    service = UserFileService(session, settings=settings, s3_client=s3_client)
+
+    attachment = await service.create_attachment_response(record)
+
+    assert attachment.model_dump(by_alias=True) == {
+        "id": "file-id",
+        "url": "https://files.example.test/uploads/users/user-123/file-id/avatar.png",
+        "mediaType": "image/png",
+        "title": "avatar.png",
+        "size": 123,
+        "providerFileId": "file-id",
+    }
+
+
+@pytest.mark.asyncio
+async def test_create_data_url_reads_s3_object(settings: S3FileSettings) -> None:
+    """Stored files can be returned as model-readable data URLs."""
+    record = SimpleNamespace(
+        id="file-id",
+        s3_bucket="metadata-bucket",
+        s3_key="uploads/users/user-123/file-id/avatar.png",
+        original_filename="avatar.png",
+        content_type="image/png",
+        size_bytes=5,
+    )
+    session = FakeSession(record)
+    s3_client = FakeS3Client()
+    s3_client.objects[record.s3_key] = b"image"
+    service = UserFileService(session, settings=settings, s3_client=s3_client)
+
+    metadata, data_url = await service.create_data_url("file-id")
+
+    assert metadata is record
+    assert data_url == "data:image/png;base64,aW1hZ2U="
+
+
+@pytest.mark.asyncio
+async def test_read_file_bytes_reads_s3_object(settings: S3FileSettings) -> None:
+    """Stored files can be read as raw bytes for agent file tools."""
+    record = SimpleNamespace(
+        id="file-id",
+        s3_bucket="metadata-bucket",
+        s3_key="uploads/users/user-123/file-id/report.pdf",
+        original_filename="report.pdf",
+        content_type="application/pdf",
+        size_bytes=7,
+    )
+    session = FakeSession(record)
+    s3_client = FakeS3Client()
+    s3_client.objects[record.s3_key] = b"pdfdata"
+    service = UserFileService(session, settings=settings, s3_client=s3_client)
+
+    metadata, contents = await service.read_file_bytes("file-id")
+
+    assert metadata is record
+    assert contents == b"pdfdata"
 
 
 @pytest.mark.asyncio

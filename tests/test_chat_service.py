@@ -21,6 +21,7 @@ from src.tools import (
     firecrawl_mcp_auth_config,
     firecrawl_mcp_url,
     load_firecrawl_mcp_tools,
+    read_chat_attachment,
 )
 
 
@@ -38,9 +39,11 @@ class StreamingAgent:
     def __init__(self) -> None:
         """Initialize the call marker."""
         self.called = False
+        self.prompts = []
 
-    async def astream_events(self, *_args, **_kwargs):
+    async def astream_events(self, *args, **_kwargs):
         self.called = True
+        self.prompts.append(args[0])
         yield {
             "type": "messages",
             "data": (
@@ -121,6 +124,19 @@ class FakeConversationPersistence:
         return SimpleNamespace(id="tool-call-id")
 
 
+class FakeUserFileLookup:
+    """Fake file service that returns model-readable data URLs."""
+
+    def __init__(self) -> None:
+        """Initialize captured file ids."""
+        self.file_ids = []
+
+    async def create_data_url(self, file_id: str):
+        """Return a deterministic data URL."""
+        self.file_ids.append(file_id)
+        return SimpleNamespace(id=file_id), f"data:image/png;base64,{file_id}"
+
+
 def test_build_openai_chat_model_uses_reasoning_defaults(monkeypatch) -> None:
     """The configured OpenAI model should default to reasoning settings."""
     monkeypatch.delenv("RELIVO_CHAT_MODEL", raising=False)
@@ -199,8 +215,9 @@ async def test_load_orchestrator_tools_keeps_local_tool_when_firecrawl_fails(mon
 
     tools = await load_orchestrator_tools()
 
-    assert len(tools) == 1
+    assert len(tools) == 2
     assert tools[0].name == "get_demo_context"
+    assert tools[1].name == read_chat_attachment.name
 
 
 def test_env_bool_handles_common_truthy_values(monkeypatch) -> None:
@@ -253,6 +270,114 @@ async def test_stream_chat_uses_agent_for_non_greeting() -> None:
     ]
 
     assert agent.called is True
+    assert agent.prompts == ["help me plan"]
+    assert 'data: {"type": "text-delta", "id": "text-1", "delta": "Planned"}\n\n' in events
+
+
+@pytest.mark.asyncio
+async def test_stream_chat_builds_multimodal_prompt_for_attachments() -> None:
+    """Image attachments should be passed to the agent as image URL content parts."""
+    agent = StreamingAgent()
+    service = ChatService(agent)
+
+    events = [
+        event
+        async for event in service.stream_chat(
+            ChatRequest(
+                user_message="",
+                thread_id="user-123",
+                attachments=[
+                    {
+                        "url": "https://files.example.test/avatar.png",
+                        "mediaType": "image/png",
+                        "title": "avatar.png",
+                    }
+                ],
+            )
+        )
+    ]
+
+    assert agent.prompts == [
+        [
+            {"type": "text", "text": "Please analyze the attached file."},
+            {
+                "type": "image_url",
+                "image_url": {"url": "https://files.example.test/avatar.png"},
+            },
+        ]
+    ]
+    assert 'data: {"type": "text-delta", "id": "text-1", "delta": "Planned"}\n\n' in events
+
+
+@pytest.mark.asyncio
+async def test_stream_chat_resolves_uploaded_image_to_data_url() -> None:
+    """Uploaded image attachments should avoid passing private S3 URLs to OpenAI."""
+    agent = StreamingAgent()
+    file_lookup = FakeUserFileLookup()
+    service = ChatService(agent, user_file_service=file_lookup)
+
+    events = [
+        event
+        async for event in service.stream_chat(
+            ChatRequest(
+                user_message="What is this?",
+                thread_id="user-123",
+                attachments=[
+                    {
+                        "id": "file-id",
+                        "url": "https://files.example.test/avatar.png",
+                        "mediaType": "image/png",
+                        "title": "avatar.png",
+                        "providerFileId": "file-id",
+                    }
+                ],
+            )
+        )
+    ]
+
+    assert file_lookup.file_ids == ["file-id"]
+    assert agent.prompts == [
+        [
+            {"type": "text", "text": "What is this?"},
+            {
+                "type": "image_url",
+                "image_url": {"url": "data:image/png;base64,file-id"},
+            },
+        ]
+    ]
+    assert 'data: {"type": "text-delta", "id": "text-1", "delta": "Planned"}\n\n' in events
+
+
+@pytest.mark.asyncio
+async def test_stream_chat_passes_document_attachments_as_file_refs() -> None:
+    """Document attachments should be passed by providerFileId instead of private URLs."""
+    agent = StreamingAgent()
+    service = ChatService(agent)
+
+    events = [
+        event
+        async for event in service.stream_chat(
+            ChatRequest(
+                user_message="Summarize this",
+                thread_id="user-123",
+                attachments=[
+                    {
+                        "url": "https://private.example.test/report.pdf?token=secret",
+                        "mediaType": "application/pdf",
+                        "title": "report.pdf",
+                        "providerFileId": "file-id",
+                    }
+                ],
+            )
+        )
+    ]
+
+    prompt = agent.prompts[0]
+    file_block = prompt[1]["text"]
+    assert "[FILES]" in file_block
+    assert "providerFileId: file-id" in file_block
+    assert "read_chat_attachment" in file_block
+    assert "https://private.example.test" not in file_block
     assert 'data: {"type": "text-delta", "id": "text-1", "delta": "Planned"}\n\n' in events
 
 

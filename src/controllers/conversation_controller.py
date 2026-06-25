@@ -28,6 +28,13 @@ from src.services.conversation_service import (
     ReasoningNotFoundError,
     ToolCallNotFoundError,
 )
+from src.services.user_file_service import (
+    S3ConfigurationError,
+    S3StorageError,
+    UserFileNotFoundError,
+    UserFileObjectNotFoundError,
+    UserFileService,
+)
 from src.utils.error_response import build_error_response
 
 router = APIRouter(prefix="/conversations", tags=["Conversations"])
@@ -43,6 +50,19 @@ def get_conversation_service(
 ConversationServiceDependency = Annotated[
     ConversationService,
     Depends(get_conversation_service),
+]
+
+
+def get_conversation_user_file_service(
+    session: Annotated[AsyncSession, Depends(get_db_session)],
+) -> UserFileService:
+    """Resolve user file service for attachment URL hydration."""
+    return UserFileService(session)
+
+
+ConversationUserFileServiceDependency = Annotated[
+    UserFileService,
+    Depends(get_conversation_user_file_service),
 ]
 
 
@@ -84,10 +104,13 @@ async def create_conversation(
 async def get_conversation(
     conversation_id: str,
     service: ConversationServiceDependency,
+    file_service: ConversationUserFileServiceDependency,
 ) -> ConversationWithMessagesResponse:
     """Get a conversation with messages."""
     try:
-        return await service.get_conversation_with_messages(conversation_id)
+        conversation = await service.get_conversation_with_messages(conversation_id)
+        await _hydrate_message_attachment_urls(conversation.messages, file_service)
+        return conversation
     except ConversationNotFoundError as exc:
         raise not_found(404, "conversation not found", "conversation_not_found") from exc
 
@@ -121,10 +144,13 @@ async def delete_conversation(
 async def list_conversation_messages(
     conversation_id: str,
     service: ConversationServiceDependency,
+    file_service: ConversationUserFileServiceDependency,
 ) -> list[MessageResponse]:
     """List messages in a conversation."""
     try:
-        return await service.list_messages(conversation_id)
+        messages = await service.list_messages(conversation_id)
+        await _hydrate_message_attachment_urls(messages, file_service)
+        return messages
     except ConversationNotFoundError as exc:
         raise not_found(404, "conversation not found", "conversation_not_found") from exc
 
@@ -138,10 +164,13 @@ async def create_conversation_message(
     conversation_id: str,
     payload: MessageCreate,
     service: ConversationServiceDependency,
+    file_service: ConversationUserFileServiceDependency,
 ) -> MessageResponse:
     """Create a message in a conversation."""
     try:
-        return await service.create_message(conversation_id, payload)
+        message = await service.create_message(conversation_id, payload)
+        await _hydrate_message_attachment_urls([message], file_service)
+        return message
     except ConversationNotFoundError as exc:
         raise not_found(404, "conversation not found", "conversation_not_found") from exc
 
@@ -151,10 +180,13 @@ async def get_conversation_message(
     conversation_id: str,
     message_id: str,
     service: ConversationServiceDependency,
+    file_service: ConversationUserFileServiceDependency,
 ) -> MessageResponse:
     """Get a message in a conversation."""
     try:
-        return await service.get_message(conversation_id, message_id)
+        message = await service.get_message(conversation_id, message_id)
+        await _hydrate_message_attachment_urls([message], file_service)
+        return message
     except MessageNotFoundError as exc:
         raise not_found(404, "message not found", "message_not_found") from exc
 
@@ -165,10 +197,13 @@ async def update_conversation_message(
     message_id: str,
     payload: MessageUpdate,
     service: ConversationServiceDependency,
+    file_service: ConversationUserFileServiceDependency,
 ) -> MessageResponse:
     """Update a message in a conversation."""
     try:
-        return await service.update_message(conversation_id, message_id, payload)
+        message = await service.update_message(conversation_id, message_id, payload)
+        await _hydrate_message_attachment_urls([message], file_service)
+        return message
     except MessageNotFoundError as exc:
         raise not_found(404, "message not found", "message_not_found") from exc
 
@@ -364,3 +399,64 @@ async def delete_message_reasoning_entry(
         await service.delete_reasoning_entry(conversation_id, message_id, reasoning_id)
     except ReasoningNotFoundError as exc:
         raise not_found(404, "reasoning not found", "reasoning_not_found") from exc
+
+
+async def _hydrate_message_attachment_urls(
+    messages: list,
+    file_service: UserFileService,
+) -> None:
+    """Replace stored attachment URLs with fresh presigned URLs when possible."""
+    for message in messages:
+        metadata = getattr(message, "message_metadata", None)
+        if not isinstance(metadata, dict):
+            continue
+
+        attachments = metadata.get("attachments")
+        if not isinstance(attachments, list):
+            continue
+
+        hydrated_attachments = [
+            await _hydrate_attachment_url(attachment, file_service) for attachment in attachments
+        ]
+        message.message_metadata = {**metadata, "attachments": hydrated_attachments}
+
+
+async def _hydrate_attachment_url(
+    attachment: object,
+    file_service: UserFileService,
+) -> object:
+    if not isinstance(attachment, dict):
+        return attachment
+
+    file_id = _attachment_file_id(attachment)
+    if not file_id:
+        return attachment
+
+    try:
+        metadata, url = await file_service.create_download_url(file_id)
+    except (
+        S3ConfigurationError,
+        S3StorageError,
+        UserFileNotFoundError,
+        UserFileObjectNotFoundError,
+    ):
+        return attachment
+
+    return {
+        **attachment,
+        "url": url,
+        "mediaType": (
+            metadata.content_type or attachment.get("mediaType") or "application/octet-stream"
+        ),
+        "title": metadata.original_filename or attachment.get("title") or "attachment",
+        "providerFileId": metadata.id,
+    }
+
+
+def _attachment_file_id(attachment: dict) -> str | None:
+    value = (
+        attachment.get("providerFileId")
+        or attachment.get("provider_file_id")
+        or attachment.get("id")
+    )
+    return str(value) if value else None

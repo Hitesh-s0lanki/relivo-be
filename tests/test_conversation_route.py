@@ -7,7 +7,10 @@ from uuid import uuid4
 import pytest
 from httpx import ASGITransport, AsyncClient
 
-from src.controllers.conversation_controller import get_conversation_service
+from src.controllers.conversation_controller import (
+    get_conversation_service,
+    get_conversation_user_file_service,
+)
 from src.main import create_app
 from src.schemas.conversation import (
     ConversationCreate,
@@ -109,7 +112,7 @@ class FakeConversationService:
             reasoning_entries=[
                 self._reasoning_entry(reasoning) for reasoning in payload.reasoning_entries
             ],
-            message_metadata=payload.metadata,
+            message_metadata=payload.metadata_with_attachments(),
             created_at=now(),
             updated_at=now(),
         )
@@ -134,8 +137,20 @@ class FakeConversationService:
     ) -> SimpleNamespace:
         message = await self.get_message(conversation_id, message_id)
         update_data = payload.model_dump(exclude_unset=True)
-        if "metadata" in update_data:
-            update_data["message_metadata"] = update_data.pop("metadata")
+        if "metadata" in update_data or "attachments" in update_data:
+            update_data.pop("metadata", None)
+            update_data.pop("attachments", None)
+            message_metadata = (
+                payload.metadata
+                if "metadata" in payload.model_fields_set
+                else message.message_metadata
+            )
+            if "attachments" in payload.model_fields_set:
+                message_metadata = dict(message_metadata or {})
+                message_metadata["attachments"] = [
+                    attachment.model_dump(by_alias=True) for attachment in payload.attachments or []
+                ]
+            update_data["message_metadata"] = message_metadata
         for field, value in update_data.items():
             setattr(message, field, value)
         message.updated_at = now()
@@ -293,17 +308,39 @@ class FakeConversationService:
         )
 
 
+class FakeUserFileService:
+    """Fake user file service for attachment URL hydration."""
+
+    async def create_download_url(self, file_id: str):
+        """Return a fresh deterministic attachment URL."""
+        return (
+            SimpleNamespace(
+                id=file_id,
+                content_type="image/png",
+                original_filename="fresh.png",
+            ),
+            f"https://fresh.example.test/{file_id}.png",
+        )
+
+
 @pytest.fixture
 def fake_service() -> FakeConversationService:
     """Return a fake conversation service."""
     return FakeConversationService()
 
 
+def create_conversation_test_app(fake_service: FakeConversationService):
+    """Create an app with conversation dependencies overridden."""
+    app = create_app()
+    app.dependency_overrides[get_conversation_service] = lambda: fake_service
+    app.dependency_overrides[get_conversation_user_file_service] = lambda: FakeUserFileService()
+    return app
+
+
 @pytest.mark.asyncio
 async def test_conversation_crud_routes(fake_service: FakeConversationService) -> None:
     """Conversation routes should support create, list, get, update, and delete."""
-    app = create_app()
-    app.dependency_overrides[get_conversation_service] = lambda: fake_service
+    app = create_conversation_test_app(fake_service)
 
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
         created = await client.post(
@@ -335,8 +372,7 @@ async def test_conversation_list_filters_by_user_id(
     fake_service: FakeConversationService,
 ) -> None:
     """Conversation listing should support user scoping."""
-    app = create_app()
-    app.dependency_overrides[get_conversation_service] = lambda: fake_service
+    app = create_conversation_test_app(fake_service)
 
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
         await client.post("/conversations", json={"user_id": "user-123", "title": "Planning"})
@@ -353,8 +389,7 @@ async def test_message_can_contain_multiple_tool_calls_and_reasoning_entries(
     fake_service: FakeConversationService,
 ) -> None:
     """A single agent message should support multiple tool calls and reasoning entries."""
-    app = create_app()
-    app.dependency_overrides[get_conversation_service] = lambda: fake_service
+    app = create_conversation_test_app(fake_service)
 
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
         conversation = await client.post(
@@ -410,10 +445,91 @@ async def test_message_can_contain_multiple_tool_calls_and_reasoning_entries(
 
 
 @pytest.mark.asyncio
+async def test_message_can_persist_attachments(
+    fake_service: FakeConversationService,
+) -> None:
+    """User messages can store attachments without requiring text."""
+    app = create_conversation_test_app(fake_service)
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        conversation = await client.post(
+            "/conversations",
+            json={"user_id": "user-123", "title": "Planning"},
+        )
+        conversation_id = conversation.json()["id"]
+        created = await client.post(
+            f"/conversations/{conversation_id}/messages",
+            json={
+                "role": "user",
+                "attachments": [
+                    {
+                        "url": "https://files.example.test/avatar.png",
+                        "mediaType": "image/png",
+                        "title": "avatar.png",
+                    }
+                ],
+            },
+        )
+        listed = await client.get(f"/conversations/{conversation_id}/messages")
+
+    body = created.json()
+    assert created.status_code == 201
+    assert body["text"] is None
+    assert body["attachments"] == [
+        {
+            "url": "https://files.example.test/avatar.png",
+            "mediaType": "image/png",
+            "title": "avatar.png",
+        }
+    ]
+    assert body["metadata"]["attachments"] == body["attachments"]
+    assert listed.json()[0]["attachments"] == body["attachments"]
+
+
+@pytest.mark.asyncio
+async def test_message_attachment_urls_are_refreshed_from_provider_file_id(
+    fake_service: FakeConversationService,
+) -> None:
+    """Conversation responses should not replay stale stored presigned URLs."""
+    app = create_conversation_test_app(fake_service)
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        conversation = await client.post(
+            "/conversations",
+            json={"user_id": "user-123", "title": "Planning"},
+        )
+        conversation_id = conversation.json()["id"]
+        created = await client.post(
+            f"/conversations/{conversation_id}/messages",
+            json={
+                "role": "user",
+                "attachments": [
+                    {
+                        "url": "https://expired.example.test/avatar.png",
+                        "mediaType": "image/png",
+                        "title": "avatar.png",
+                        "providerFileId": "file-id",
+                    }
+                ],
+            },
+        )
+        listed = await client.get(f"/conversations/{conversation_id}/messages")
+
+    refreshed_attachment = {
+        "url": "https://fresh.example.test/file-id.png",
+        "mediaType": "image/png",
+        "title": "fresh.png",
+        "providerFileId": "file-id",
+    }
+    assert created.status_code == 201
+    assert created.json()["attachments"] == [refreshed_attachment]
+    assert listed.json()[0]["attachments"] == [refreshed_attachment]
+
+
+@pytest.mark.asyncio
 async def test_nested_tool_call_crud_routes(fake_service: FakeConversationService) -> None:
     """Tool call routes should support create, list, get, update, and delete."""
-    app = create_app()
-    app.dependency_overrides[get_conversation_service] = lambda: fake_service
+    app = create_conversation_test_app(fake_service)
 
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
         conversation = await client.post(
@@ -458,8 +574,7 @@ async def test_nested_tool_call_crud_routes(fake_service: FakeConversationServic
 @pytest.mark.asyncio
 async def test_nested_reasoning_crud_routes(fake_service: FakeConversationService) -> None:
     """Reasoning routes should support create, list, get, update, and delete."""
-    app = create_app()
-    app.dependency_overrides[get_conversation_service] = lambda: fake_service
+    app = create_conversation_test_app(fake_service)
 
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
         conversation = await client.post(
@@ -506,8 +621,7 @@ async def test_conversation_not_found_uses_standard_error(
     fake_service: FakeConversationService,
 ) -> None:
     """Missing conversations should return the standard error shape."""
-    app = create_app()
-    app.dependency_overrides[get_conversation_service] = lambda: fake_service
+    app = create_conversation_test_app(fake_service)
 
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
         response = await client.get("/conversations/missing")
@@ -523,8 +637,7 @@ async def test_conversation_not_found_uses_standard_error(
 @pytest.mark.asyncio
 async def test_message_requires_content(fake_service: FakeConversationService) -> None:
     """Messages should require text, tool calls, or reasoning entries."""
-    app = create_app()
-    app.dependency_overrides[get_conversation_service] = lambda: fake_service
+    app = create_conversation_test_app(fake_service)
 
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
         conversation = await client.post(

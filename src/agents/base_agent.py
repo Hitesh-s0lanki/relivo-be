@@ -21,6 +21,7 @@ from langgraph.checkpoint.memory import InMemorySaver  # noqa: E402
 
 AgentModel = str | BaseChatModel
 AgentTool = BaseTool | Callable[..., Any] | dict[str, Any]
+AgentPrompt = str | list[dict[str, Any]]
 StreamMode = str | Sequence[str]
 StreamVersion = Literal["v1", "v2"]
 
@@ -57,7 +58,13 @@ class BaseAgent:
             name=config.name,
         )
 
-    def invoke(self, prompt: str, *, thread_id: str = "default", context: Any | None = None) -> str:
+    def invoke(
+        self,
+        prompt: AgentPrompt,
+        *,
+        thread_id: str = "default",
+        context: Any | None = None,
+    ) -> str:
         """Run one agent turn and return the final assistant text."""
         kwargs = self._run_kwargs(thread_id=thread_id, context=context)
         result = self.graph.invoke(self._messages_input(prompt), **kwargs)
@@ -65,7 +72,7 @@ class BaseAgent:
 
     async def ainvoke(
         self,
-        prompt: str,
+        prompt: AgentPrompt,
         *,
         thread_id: str = "default",
         context: Any | None = None,
@@ -77,7 +84,7 @@ class BaseAgent:
 
     def stream_text(
         self,
-        prompt: str,
+        prompt: AgentPrompt,
         *,
         thread_id: str = "default",
         context: Any | None = None,
@@ -97,7 +104,7 @@ class BaseAgent:
 
     def stream_events(
         self,
-        prompt: str,
+        prompt: AgentPrompt,
         *,
         thread_id: str = "default",
         context: Any | None = None,
@@ -115,7 +122,7 @@ class BaseAgent:
 
     async def astream_text(
         self,
-        prompt: str,
+        prompt: AgentPrompt,
         *,
         thread_id: str = "default",
         context: Any | None = None,
@@ -135,7 +142,7 @@ class BaseAgent:
 
     async def astream_events(
         self,
-        prompt: str,
+        prompt: AgentPrompt,
         *,
         thread_id: str = "default",
         context: Any | None = None,
@@ -153,7 +160,7 @@ class BaseAgent:
             yield chunk
 
     @staticmethod
-    def _messages_input(prompt: str) -> dict[str, list[dict[str, str]]]:
+    def _messages_input(prompt: AgentPrompt) -> dict[str, list[dict[str, Any]]]:
         return {"messages": [{"role": "user", "content": prompt}]}
 
     @staticmethod

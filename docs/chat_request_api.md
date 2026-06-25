@@ -40,9 +40,10 @@ Body:
 
 | Field | Type | Required | Default | Description |
 |-------|------|----------|---------|-------------|
-| `user_message` | string | Yes | - | User message to send to the chat agent. Must be 1-8000 characters and cannot be blank. |
+| `user_message` | string | Required unless `attachments` is present | `""` | User message to send to the chat agent. Must be 1-8000 characters when present. |
 | `thread_id` | string | No | `demo` | Conversation thread identifier used by agent memory/checkpointing. |
 | `stream_mode` | string[] | No | `["updates", "messages"]` | Agent stream event types to include. Supported values are `updates` and `messages`. |
+| `attachments` | object[] | No | `[]` | Uploaded file references returned by `POST /ai/uploads`. At least one attachment is required when `user_message` is blank. |
 
 When `thread_id` is an existing conversation UUID and the agent uses tools, the backend also stores the completed agent response with its tool calls in the conversation API. Non-UUID thread ids and no-tool chat turns are streamed only.
 
@@ -52,7 +53,15 @@ Example:
 {
   "user_message": "Help me plan my day",
   "thread_id": "user-123",
-  "stream_mode": ["updates", "messages"]
+  "stream_mode": ["updates", "messages"],
+  "attachments": [
+    {
+      "url": "https://s3-presigned-url.example/avatar.png",
+      "mediaType": "image/png",
+      "title": "avatar.png",
+      "providerFileId": "file-id"
+    }
+  ]
 }
 ```
 
@@ -63,6 +72,27 @@ Minimal example:
   "user_message": "Hello"
 }
 ```
+
+Attachment-only example:
+
+```json
+{
+  "thread_id": "conversation-id",
+  "attachments": [
+    {
+      "url": "https://s3-presigned-url.example/screenshot.png",
+      "mediaType": "image/png",
+      "title": "screenshot.png",
+      "providerFileId": "file-id"
+    }
+  ]
+}
+```
+
+Image attachments uploaded through `/ai/uploads` are read back from S3 using
+`providerFileId` and sent to the model as data URL image content parts. This avoids model
+download failures for private or presigned S3 URLs. Non-image attachments are included in the
+prompt as file title, media type, and URL references.
 
 ## Response
 
@@ -131,10 +161,40 @@ docs/chat_stream_reference.sse
 
 ## cURL
 
+Upload attachments first:
+
+```bash
+curl -X POST http://localhost:8000/ai/uploads \
+  -F "conversationId=conversation-id" \
+  -F "files[]=@/path/to/screenshot.png"
+```
+
+Upload response:
+
+```json
+{
+  "success": true,
+  "data": {
+    "attachments": [
+      {
+        "id": "file-id",
+        "url": "https://s3-presigned-url.example/screenshot.png",
+        "mediaType": "image/png",
+        "title": "screenshot.png",
+        "size": 123456,
+        "providerFileId": "file-id"
+      }
+    ]
+  }
+}
+```
+
+Then pass those attachments into chat:
+
 ```bash
 curl -N -X POST http://localhost:8000/chat \
   -H "Content-Type: application/json" \
-  -d '{"user_message":"Hello","thread_id":"user-123"}'
+  -d '{"user_message":"What is in this image?","thread_id":"conversation-id","attachments":[{"url":"https://s3-presigned-url.example/screenshot.png","mediaType":"image/png","title":"screenshot.png","providerFileId":"file-id"}]}'
 ```
 
 ## JavaScript Client
@@ -167,9 +227,15 @@ Because `/chat` is a `POST` streaming endpoint, use `fetch` with `ReadableStream
 
 ```ts
 type ChatRequest = {
-  user_message: string;
+  user_message?: string;
   thread_id?: string;
   stream_mode?: Array<"updates" | "messages">;
+  attachments?: Array<{
+    url: string;
+    mediaType: string;
+    title: string;
+    providerFileId?: string;
+  }>;
 };
 
 type ChatStreamPart =

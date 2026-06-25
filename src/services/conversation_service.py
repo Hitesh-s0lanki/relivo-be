@@ -20,6 +20,7 @@ from src.schemas.conversation import (
     ReasoningUpdate,
     ToolCallCreate,
     ToolCallUpdate,
+    metadata_with_attachments,
 )
 
 
@@ -132,7 +133,7 @@ class ConversationService:
             conversation_id=conversation_id,
             role=payload.role,
             text=payload.text,
-            message_metadata=payload.metadata,
+            message_metadata=payload.metadata_with_attachments(),
             tool_calls=[
                 self._tool_call_from_payload(tool_call) for tool_call in payload.tool_calls
             ],
@@ -176,8 +177,16 @@ class ConversationService:
         """Update a message."""
         message = await self.get_message(conversation_id, message_id)
         update_data = payload.model_dump(exclude_unset=True)
-        if "metadata" in update_data:
-            update_data["message_metadata"] = update_data.pop("metadata")
+        if "metadata" in update_data or "attachments" in update_data:
+            update_data.pop("metadata", None)
+            update_data.pop("attachments", None)
+            metadata = (
+                payload.metadata
+                if "metadata" in payload.model_fields_set
+                else message.message_metadata
+            )
+            attachments = payload.attachments if "attachments" in payload.model_fields_set else None
+            update_data["message_metadata"] = metadata_with_attachments(metadata, attachments)
 
         for field, value in update_data.items():
             setattr(message, field, value)

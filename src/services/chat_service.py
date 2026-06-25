@@ -9,9 +9,17 @@ from typing import Any
 from uuid import UUID
 
 from src.agents import BaseAgent
+from src.agents.base_agent import AgentPrompt
 from src.schemas.chat import ChatRequest
 from src.schemas.conversation import MessageCreate, ToolCallCreate
+from src.schemas.user_file import AttachmentInput
 from src.services.conversation_service import ConversationNotFoundError, ConversationService
+from src.services.user_file_service import (
+    S3StorageError,
+    UserFileNotFoundError,
+    UserFileObjectNotFoundError,
+    UserFileService,
+)
 from src.utils.error_response import build_error_response, log_error_response
 
 logger = logging.getLogger(__name__)
@@ -41,10 +49,12 @@ class ChatService:
         self,
         agent: BaseAgent,
         conversation_service: ConversationService | None = None,
+        user_file_service: UserFileService | None = None,
     ) -> None:
         """Initialize the service with an agent dependency."""
         self.agent = agent
         self.conversation_service = conversation_service
+        self.user_file_service = user_file_service
 
     async def stream_chat(self, request: ChatRequest) -> AsyncIterator[str]:
         """Stream a chat response as Vercel AI SDK UI message stream frames."""
@@ -55,7 +65,7 @@ class ChatService:
 
         yield self._sse_data({"type": "start", "messageId": request.thread_id})
 
-        if response := self._fast_response(request.user_message):
+        if not request.attachments and (response := self._fast_response(request.user_message)):
             yield self._sse_data({"type": "text-start", "id": "text-1"})
             yield self._sse_data({"type": "text-delta", "id": "text-1", "delta": response})
             yield self._sse_data({"type": "text-end", "id": "text-1"})
@@ -65,7 +75,7 @@ class ChatService:
 
         try:
             async for chunk in self.agent.astream_events(
-                request.user_message,
+                await self._agent_prompt(request),
                 thread_id=request.thread_id,
                 stream_mode=request.stream_mode,
             ):
@@ -378,6 +388,81 @@ class ChatService:
     def _fast_response(user_message: str) -> str | None:
         normalized = user_message.strip().lower().rstrip("!.")
         return FAST_GREETING_RESPONSES.get(normalized)
+
+    async def _agent_prompt(self, request: ChatRequest) -> AgentPrompt:
+        """Build text-only or multimodal agent input from a chat request."""
+        if not request.attachments:
+            return request.user_message
+
+        text = request.user_message.strip() or "Please analyze the attached file."
+        content: list[dict[str, Any]] = [{"type": "text", "text": text}]
+        non_image_lines: list[str] = []
+
+        for attachment in request.attachments:
+            if self._is_image_attachment(attachment):
+                content.append(
+                    {
+                        "type": "image_url",
+                        "image_url": {"url": await self._image_url_for_model(attachment)},
+                    }
+                )
+                continue
+
+            non_image_lines.append(self._file_reference_line(attachment))
+
+        if non_image_lines:
+            content.append(
+                {
+                    "type": "text",
+                    "text": (
+                        "\n\n[FILES]\n" + "\n".join(non_image_lines) + "\n[/FILES]\n"
+                        "Use read_chat_attachment(provider_file_id=<ref>) when you need "
+                        "attachment contents. Do not fetch uploaded file refs with web tools."
+                    ),
+                }
+            )
+
+        return content
+
+    async def _image_url_for_model(self, attachment: AttachmentInput) -> str:
+        """Return a model-readable image URL, preferring data URLs for stored uploads."""
+        file_id = self._attachment_file_id(attachment)
+        if not file_id or self.user_file_service is None:
+            return attachment.url
+
+        try:
+            _metadata, data_url = await self.user_file_service.create_data_url(file_id)
+        except (S3StorageError, UserFileNotFoundError, UserFileObjectNotFoundError):
+            return attachment.url
+
+        return data_url
+
+    @staticmethod
+    def _attachment_file_id(attachment: AttachmentInput) -> str | None:
+        extra = attachment.model_extra or {}
+        value = extra.get("providerFileId") or extra.get("provider_file_id") or extra.get("id")
+        return str(value) if value else None
+
+    @classmethod
+    def _file_reference_line(cls, attachment: AttachmentInput) -> str:
+        file_id = cls._attachment_file_id(attachment)
+        if not file_id:
+            return (
+                f"- title: {attachment.title}\n"
+                f"  mediaType: {attachment.media_type}\n"
+                "  status: unavailable; no providerFileId was provided"
+            )
+
+        return (
+            f"- ref: {file_id}\n"
+            f"  providerFileId: {file_id}\n"
+            f"  title: {attachment.title}\n"
+            f"  mediaType: {attachment.media_type}"
+        )
+
+    @staticmethod
+    def _is_image_attachment(attachment: AttachmentInput) -> bool:
+        return attachment.media_type.split(";")[0].strip().lower().startswith("image/")
 
     @staticmethod
     def _sse_data(data: dict[str, Any] | str) -> str:

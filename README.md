@@ -22,6 +22,14 @@ python src/main.py
 
 Server runs at `http://localhost:8000`
 
+## Database
+
+Apply the SQL migrations before using conversation or file upload APIs:
+
+```bash
+uv run python scripts/apply_migrations.py
+```
+
 ## Environment Variables
 
 The app loads from a `.env` file or environment variables. All have defaults:
@@ -41,7 +49,7 @@ The app loads from a `.env` file or environment variables. All have defaults:
 | `FIRECRAWL_API_KEY` | unset | Enables authenticated Firecrawl MCP tools for agent web search, scrape, crawl, and parse access |
 | `FIRECRAWL_MCP_ENABLED` | `true` | Toggle Firecrawl MCP tool loading for the chat agent |
 | `FIRECRAWL_MCP_URL` | `https://mcp.firecrawl.dev/v2/mcp` | Firecrawl MCP endpoint. Supports `{FIRECRAWL_API_KEY}` in custom URLs |
-| `AWS_REGION` | `us-east-1` | AWS region for S3 file storage |
+| `AWS_REGION` | `us-east-1` | Default AWS region for AWS clients |
 | `AWS_ACCESS_KEY_ID` | unset | AWS access key id used by boto3 for S3 |
 | `AWS_SECRET_ACCESS_KEY` | unset | AWS secret access key used by boto3 for S3 |
 | `AWS_S3_BUCKET` | unset | S3 bucket used for user file uploads |
@@ -55,6 +63,7 @@ The app loads from a `.env` file or environment variables. All have defaults:
 ## API
 
 - `POST /chat` — stream an agent response with Server-Sent Events
+- `POST /ai/uploads` — upload chat attachments to S3 and return frontend attachment references
 - `/conversations` — CRUD for conversations and conversation messages
 - `/files` — upload, list, fetch, download, and delete user files stored in S3
 - `GET /docs` — Swagger UI
@@ -63,8 +72,30 @@ The app loads from a `.env` file or environment variables. All have defaults:
 Open `http://localhost:8000/docs` for the full interactive API documentation.
 See `docs/chat_request_api.md` for the chat request API contract.
 See `docs/conversation_api.md` for the conversation API contract.
+See `docs/upload_api.md` for the chat upload API contract.
 
 File uploads are multipart form requests:
+
+```bash
+curl -X POST http://localhost:8000/ai/uploads \
+  -F "userId=user-123" \
+  -F "files[]=@/path/to/screenshot.png"
+```
+
+`/ai/uploads` also accepts `conversationId` instead of `userId`; the backend resolves the
+conversation owner before storing files in S3. The response returns `attachments` with
+`url`, `mediaType`, `title`, `size`, and `providerFileId`. The `url` is a temporary
+presigned S3 URL; keep `providerFileId`/`id` as the durable file reference.
+When those attachments are sent to `/chat`, include `providerFileId` so the backend can
+read the stored image from S3 and send model-readable image data instead of asking the model
+to download a private URL.
+To refresh one attachment URL directly from its durable id, call
+`GET /ai/uploads/{providerFileId}/presigned-url`.
+
+Presigned URLs are generated for the bucket's actual region. The backend detects that region
+from S3, so the app can keep `AWS_REGION=ap-south-1` even if the bucket uses another endpoint.
+
+The lower-level file API remains available:
 
 ```bash
 curl -X POST http://localhost:8000/files \

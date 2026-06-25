@@ -1,4 +1,4 @@
-CREATE TABLE user_files (
+CREATE TABLE IF NOT EXISTS user_files (
     id VARCHAR(36) PRIMARY KEY,
     user_id VARCHAR(200) NOT NULL,
     original_filename VARCHAR(500) NOT NULL,
@@ -13,14 +13,14 @@ CREATE TABLE user_files (
     CONSTRAINT uq_user_files_s3_key UNIQUE (s3_key)
 );
 
-CREATE INDEX ix_user_files_user_id
+CREATE INDEX IF NOT EXISTS ix_user_files_user_id
     ON user_files(user_id);
 
-CREATE INDEX ix_user_files_file_category
+CREATE INDEX IF NOT EXISTS ix_user_files_file_category
     ON user_files(file_category);
 
-CREATE INDEX ix_user_files_checksum_sha256
+CREATE INDEX IF NOT EXISTS ix_user_files_checksum_sha256
     ON user_files(checksum_sha256);
 
-CREATE INDEX ix_user_files_created_at
+CREATE INDEX IF NOT EXISTS ix_user_files_created_at
     ON user_files(created_at);

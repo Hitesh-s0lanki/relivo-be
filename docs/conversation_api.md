@@ -25,6 +25,7 @@ Message:
 | `conversation_id` | string | Parent conversation UUID. |
 | `role` | `user` or `agent` | Message author. |
 | `text` | string/null | Text message or assistant answer text. |
+| `attachments` | object[] | File/image references stored on `metadata.attachments`. |
 | `metadata` | object/null | Extra structured metadata. |
 | `created_at` | datetime | Creation timestamp. |
 | `updated_at` | datetime | Last update timestamp. |
@@ -148,6 +149,49 @@ Body:
 {
   "role": "user",
   "text": "Help me plan my day"
+}
+```
+
+### Create User Message With Attachments
+
+```http
+POST /conversations/{conversation_id}/messages
+```
+
+Use the attachment objects returned by `POST /ai/uploads`. Text is optional when at least one
+attachment is present. The backend stores these references in `metadata.attachments` and also
+returns them as a first-class `attachments` field for frontend rendering.
+
+Body:
+
+```json
+{
+  "role": "user",
+  "text": "What is in this image?",
+  "attachments": [
+    {
+      "url": "https://s3-presigned-url.example/screenshot.png",
+      "mediaType": "image/png",
+      "title": "screenshot.png",
+      "providerFileId": "file-id"
+    }
+  ]
+}
+```
+
+Attachment-only body:
+
+```json
+{
+  "role": "user",
+  "attachments": [
+    {
+      "url": "https://s3-presigned-url.example/screenshot.png",
+      "mediaType": "image/png",
+      "title": "screenshot.png",
+      "providerFileId": "file-id"
+    }
+  ]
 }
 ```
 

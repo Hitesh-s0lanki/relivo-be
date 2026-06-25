@@ -15,13 +15,18 @@ from src.main import create_app
 class FakeStreamingAgent:
     """Small fake agent for deterministic route tests."""
 
+    def __init__(self) -> None:
+        """Initialize captured prompts."""
+        self.prompts = []
+
     async def astream_events(
         self,
-        prompt: str,
+        prompt,
         *,
         thread_id: str,
         stream_mode: tuple[str, ...],
     ) -> AsyncIterator[dict]:
+        self.prompts.append(prompt)
         yield {
             "type": "messages",
             "data": (
@@ -117,7 +122,8 @@ async def test_app_startup_warms_orchestrator_agent(
 async def test_chat_streams_agent_events() -> None:
     """The chat route should stream normalized agent events."""
     app = create_app()
-    app.dependency_overrides[get_chat_agent] = lambda: FakeStreamingAgent()
+    agent = FakeStreamingAgent()
+    app.dependency_overrides[get_chat_agent] = lambda: agent
 
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
         response = await client.post("/chat", json={"user_message": "world", "thread_id": "t1"})
@@ -134,6 +140,45 @@ async def test_chat_streams_agent_events() -> None:
     assert {"type": "finish"} in parts
     assert parts[-1] == "[DONE]"
     assert any(isinstance(part, dict) and part["type"] == "data-agent-update" for part in parts)
+    assert agent.prompts == ["world"]
+
+
+@pytest.mark.asyncio
+async def test_chat_accepts_attachment_only_message() -> None:
+    """The chat route should pass image attachments as multimodal agent content."""
+    app = create_app()
+    agent = FakeStreamingAgent()
+    app.dependency_overrides[get_chat_agent] = lambda: agent
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        response = await client.post(
+            "/chat",
+            json={
+                "thread_id": "t1",
+                "attachments": [
+                    {
+                        "url": "https://files.example.test/avatar.png",
+                        "mediaType": "image/png",
+                        "title": "avatar.png",
+                    }
+                ],
+            },
+        )
+
+    parts = _sse_data_parts(response.text)
+
+    assert response.status_code == 200
+    expected_delta = {"type": "text-delta", "id": "text-1", "delta": f"hello {agent.prompts[0]}"}
+    assert expected_delta in parts
+    assert agent.prompts == [
+        [
+            {"type": "text", "text": "Please analyze the attached file."},
+            {
+                "type": "image_url",
+                "image_url": {"url": "https://files.example.test/avatar.png"},
+            },
+        ]
+    ]
 
 
 @pytest.mark.asyncio
@@ -173,7 +218,7 @@ async def test_chat_streams_errors() -> None:
 
 @pytest.mark.asyncio
 async def test_chat_rejects_blank_message(caplog: pytest.LogCaptureFixture) -> None:
-    """Blank messages should fail before opening the stream."""
+    """Blank messages without attachments should fail before opening the stream."""
     app = create_app()
 
     caplog.set_level(logging.INFO)
@@ -184,12 +229,12 @@ async def test_chat_rejects_blank_message(caplog: pytest.LogCaptureFixture) -> N
     assert response.status_code == 422
     assert response.json() == {
         "status": 422,
-        "message": "user_message cannot be blank",
-        "error_tag": "blank_user_message",
+        "message": "request validation failed",
+        "error_tag": "request_validation_error",
     }
     assert "error.status=422" in caplog.text
-    assert "error.message=user_message cannot be blank" in caplog.text
-    assert "error.error_tag=blank_user_message" in caplog.text
+    assert "error.message=request validation failed" in caplog.text
+    assert "error.error_tag=request_validation_error" in caplog.text
     assert "error response generated" in caplog.text
     assert caplog.text.count("error response generated") == 1
 

@@ -2,7 +2,9 @@
 
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
+
+from src.schemas.user_file import AttachmentInput
 
 
 class ChatRequest(BaseModel):
@@ -21,10 +23,12 @@ class ChatRequest(BaseModel):
     )
 
     user_message: str = Field(
-        ...,
-        min_length=1,
+        default="",
         max_length=8000,
-        description="User message to send to the chat agent. Blank messages are rejected.",
+        description=(
+            "User message to send to the chat agent. Blank messages are allowed only when "
+            "attachments are provided."
+        ),
         examples=["Help me plan my day"],
     )
     thread_id: str = Field(
@@ -39,6 +43,17 @@ class ChatRequest(BaseModel):
         description="Agent stream event types to include in the SSE response.",
         examples=[["updates", "messages"]],
     )
+    attachments: list[AttachmentInput] = Field(
+        default_factory=list,
+        description="Uploaded attachment references to include in the chat turn.",
+    )
+
+    @model_validator(mode="after")
+    def validate_content(self) -> "ChatRequest":
+        """Require text or at least one uploaded attachment."""
+        if not self.user_message.strip() and not self.attachments:
+            raise ValueError("user_message or attachments is required")
+        return self
 
 
 class ChatErrorResponse(BaseModel):
