@@ -419,6 +419,28 @@ async def test_create_data_url_reads_s3_object(settings: S3FileSettings) -> None
 
 
 @pytest.mark.asyncio
+async def test_read_file_bytes_reads_s3_object(settings: S3FileSettings) -> None:
+    """Stored files can be read as raw bytes for agent file tools."""
+    record = SimpleNamespace(
+        id="file-id",
+        s3_bucket="metadata-bucket",
+        s3_key="uploads/users/user-123/file-id/report.pdf",
+        original_filename="report.pdf",
+        content_type="application/pdf",
+        size_bytes=7,
+    )
+    session = FakeSession(record)
+    s3_client = FakeS3Client()
+    s3_client.objects[record.s3_key] = b"pdfdata"
+    service = UserFileService(session, settings=settings, s3_client=s3_client)
+
+    metadata, contents = await service.read_file_bytes("file-id")
+
+    assert metadata is record
+    assert contents == b"pdfdata"
+
+
+@pytest.mark.asyncio
 async def test_delete_file_removes_s3_object_and_metadata(settings: S3FileSettings) -> None:
     """Deleting a file should remove both S3 content and metadata."""
     record = SimpleNamespace(

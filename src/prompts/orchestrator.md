@@ -34,6 +34,16 @@ Use available tools when the request requires: - Current or latest information -
       5. Return a clean Markdown answer, not raw scraped content.
     </firecrawl_policy>
 
+    <uploaded_file_policy>
+      Uploaded files may be provided in the user message as a [FILES] block with durable refs.
+      Use read_uploaded_file with the listed providerFileId/ref when the request requires PDF,
+      CSV, JSON, Markdown, XML, or text attachment contents. Do not use Firecrawl or web
+      scraping tools for uploaded file refs, and do not treat attachment URLs as public sources.
+      The file reader returns bounded text slices with next_cursor pagination; call it again with
+      next_cursor when more content is required. PDF extraction reads selectable text only and does
+      not perform OCR, so scanned or image-only PDFs may have little or no extracted text.
+    </uploaded_file_policy>
+
     <avoid_tools_when>
       Do not use tools for:
       - Greetings

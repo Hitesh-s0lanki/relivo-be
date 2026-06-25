@@ -408,15 +408,17 @@ class ChatService:
                 )
                 continue
 
-            non_image_lines.append(
-                f"- {attachment.title} ({attachment.media_type}): {attachment.url}"
-            )
+            non_image_lines.append(self._file_reference_line(attachment))
 
         if non_image_lines:
             content.append(
                 {
                     "type": "text",
-                    "text": "\n\nAttached files:\n" + "\n".join(non_image_lines),
+                    "text": (
+                        "\n\n[FILES]\n" + "\n".join(non_image_lines) + "\n[/FILES]\n"
+                        "Use read_uploaded_file(provider_file_id=<ref>) when you need "
+                        "attachment contents. Do not fetch uploaded file refs with web tools."
+                    ),
                 }
             )
 
@@ -440,6 +442,23 @@ class ChatService:
         extra = attachment.model_extra or {}
         value = extra.get("providerFileId") or extra.get("provider_file_id") or extra.get("id")
         return str(value) if value else None
+
+    @classmethod
+    def _file_reference_line(cls, attachment: AttachmentInput) -> str:
+        file_id = cls._attachment_file_id(attachment)
+        if not file_id:
+            return (
+                f"- title: {attachment.title}\n"
+                f"  mediaType: {attachment.media_type}\n"
+                "  status: unavailable; no providerFileId was provided"
+            )
+
+        return (
+            f"- ref: {file_id}\n"
+            f"  providerFileId: {file_id}\n"
+            f"  title: {attachment.title}\n"
+            f"  mediaType: {attachment.media_type}"
+        )
 
     @staticmethod
     def _is_image_attachment(attachment: AttachmentInput) -> bool:

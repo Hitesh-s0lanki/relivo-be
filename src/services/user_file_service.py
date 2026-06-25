@@ -242,6 +242,13 @@ class UserFileService:
 
     async def create_data_url(self, file_id: str) -> tuple[UserFile, str]:
         """Read a stored file from S3 and return a base64 data URL."""
+        metadata, contents = await self.read_file_bytes(file_id)
+        media_type = metadata.content_type or "application/octet-stream"
+        encoded = base64.b64encode(contents).decode("ascii")
+        return metadata, f"data:{media_type};base64,{encoded}"
+
+    async def read_file_bytes(self, file_id: str) -> tuple[UserFile, bytes]:
+        """Read a stored file from S3 and return its raw bytes."""
         metadata = await self.get_file(file_id)
         try:
             await self._ensure_object_exists(metadata.s3_bucket, metadata.s3_key)
@@ -262,9 +269,7 @@ class UserFileService:
         except (BotoCoreError, KeyError) as exc:
             raise S3StorageError("failed to read file from S3") from exc
 
-        media_type = metadata.content_type or "application/octet-stream"
-        encoded = base64.b64encode(contents).decode("ascii")
-        return metadata, f"data:{media_type};base64,{encoded}"
+        return metadata, contents
 
     async def create_presigned_download_url(self, metadata: UserFile) -> str:
         """Create a temporary presigned URL for stored file metadata."""
