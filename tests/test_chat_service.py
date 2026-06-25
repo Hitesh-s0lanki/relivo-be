@@ -21,6 +21,10 @@ from src.tools import (
     firecrawl_mcp_auth_config,
     firecrawl_mcp_url,
     load_firecrawl_mcp_tools,
+    memory_commit,
+    memory_context,
+    memory_search,
+    memory_supersede,
     read_chat_attachment,
 )
 
@@ -41,9 +45,10 @@ class StreamingAgent:
         self.called = False
         self.prompts = []
 
-    async def astream_events(self, *args, **_kwargs):
+    async def astream_events(self, *args, **kwargs):
         self.called = True
         self.prompts.append(args[0])
+        self.context = kwargs.get("context")
         yield {
             "type": "messages",
             "data": (
@@ -123,6 +128,10 @@ class FakeConversationPersistence:
         self.created_tool_calls.append((conversation_id, message_id, payload))
         return SimpleNamespace(id="tool-call-id")
 
+    async def get_conversation(self, conversation_id):
+        """Return a fake conversation for runtime context."""
+        return SimpleNamespace(id=conversation_id, user_id="user-ctx")
+
 
 class FakeUserFileLookup:
     """Fake file service that returns model-readable data URLs."""
@@ -156,8 +165,12 @@ def test_orchestrator_prompt_is_loaded_from_markdown() -> None:
     prompt = load_orchestrator_prompt()
 
     assert ORCHESTRATOR_AGENT_NAME == "Orchestrator"
-    assert "You are Orchestrator" in prompt
-    assert "Use tools only when they improve accuracy" in prompt
+    assert "Relivo stateful streaming chat agent" in prompt
+    assert (
+        "Call memory_context before answering requests that depend on saved user identity"
+        in prompt
+    )
+    assert "Use tools for current or verifiable information" in prompt
 
 
 def test_build_openai_chat_model_uses_env_overrides(monkeypatch) -> None:
@@ -215,9 +228,13 @@ async def test_load_orchestrator_tools_keeps_local_tool_when_firecrawl_fails(mon
 
     tools = await load_orchestrator_tools()
 
-    assert len(tools) == 2
+    assert len(tools) == 6
     assert tools[0].name == "get_demo_context"
     assert tools[1].name == read_chat_attachment.name
+    assert tools[2].name == memory_context.name
+    assert tools[3].name == memory_search.name
+    assert tools[4].name == memory_commit.name
+    assert tools[5].name == memory_supersede.name
 
 
 def test_env_bool_handles_common_truthy_values(monkeypatch) -> None:

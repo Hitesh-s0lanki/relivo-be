@@ -1,6 +1,7 @@
 """Database models."""
 
 from src.models.conversation import Conversation
+from src.models.memory import Memory
 from src.models.message import (
     ConversationMessage,
     ConversationMessageReasoning,
@@ -13,5 +14,6 @@ __all__ = [
     "ConversationMessage",
     "ConversationMessageReasoning",
     "ConversationMessageToolCall",
+    "Memory",
     "UserFile",
 ]
