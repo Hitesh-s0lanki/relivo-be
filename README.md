@@ -89,6 +89,8 @@ presigned S3 URL; keep `providerFileId`/`id` as the durable file reference.
 When those attachments are sent to `/chat`, include `providerFileId` so the backend can
 read the stored image from S3 and send model-readable image data instead of asking the model
 to download a private URL.
+To refresh one attachment URL directly from its durable id, call
+`GET /ai/uploads/{providerFileId}/presigned-url`.
 
 Presigned URLs are generated for the bucket's actual region. The backend detects that region
 from S3, so the app can keep `AWS_REGION=ap-south-1` even if the bucket uses another endpoint.

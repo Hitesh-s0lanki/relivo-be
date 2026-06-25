@@ -163,6 +163,41 @@ async def test_upload_ai_attachments_returns_frontend_attachment_shape() -> None
 
 
 @pytest.mark.asyncio
+async def test_create_ai_attachment_presigned_url() -> None:
+    """AI route returns a fresh presigned URL from a provider file id."""
+    app = create_app()
+    file_service = FakeUserFileService()
+    app.dependency_overrides[get_user_file_service] = lambda: file_service
+    app.dependency_overrides[get_upload_conversation_service] = lambda: FakeConversationService()
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        upload_response = await client.post(
+            "/ai/uploads",
+            data={"conversationId": "conversation-123"},
+            files=[("files[]", ("avatar.png", b"image-bytes", "image/png"))],
+        )
+        file_id = upload_response.json()["data"]["attachments"][0]["providerFileId"]
+        response = await client.get(f"/ai/uploads/{file_id}/presigned-url")
+
+    body = response.json()
+    assert response.status_code == 200
+    assert body == {
+        "success": True,
+        "data": {
+            "attachment": {
+                "id": file_id,
+                "url": f"https://example.test/user-files/users/user-123/{file_id}/avatar.png",
+                "mediaType": "image/png",
+                "title": "avatar.png",
+                "size": len(b"image-bytes"),
+                "providerFileId": file_id,
+            },
+            "expiresInSeconds": 600,
+        },
+    }
+
+
+@pytest.mark.asyncio
 async def test_create_user_file_download_url() -> None:
     """Download route returns file metadata and a presigned URL."""
     app = create_app()

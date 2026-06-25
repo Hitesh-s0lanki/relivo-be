@@ -2,6 +2,7 @@
 
 from src.controllers.user_file_controller import (
     ai_router,
+    create_ai_attachment_presigned_url,
     create_user_file_download_url,
     delete_user_file,
     get_upload_conversation_service,
@@ -15,6 +16,7 @@ from src.controllers.user_file_controller import (
 
 __all__ = [
     "ai_router",
+    "create_ai_attachment_presigned_url",
     "create_user_file_download_url",
     "delete_user_file",
     "get_user_file",

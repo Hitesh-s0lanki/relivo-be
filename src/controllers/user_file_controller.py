@@ -9,6 +9,8 @@ from src.database import get_db_session
 from src.schemas.chat import ChatErrorResponse
 from src.schemas.user_file import (
     FileCategory,
+    PresignedAttachmentData,
+    PresignedAttachmentResponse,
     UploadsData,
     UploadsResponse,
     UserFileDownloadResponse,
@@ -100,6 +102,37 @@ async def upload_ai_attachments(
         raise _http_error(500, "S3 file storage failed", "s3_storage_failed") from exc
 
     return UploadsResponse(data=UploadsData(attachments=attachments))
+
+
+@ai_router.get(
+    "/uploads/{file_id}/presigned-url",
+    response_model=PresignedAttachmentResponse,
+    responses={
+        404: {"description": "File not found.", "model": ChatErrorResponse},
+        500: {"description": "S3 file storage failed.", "model": ChatErrorResponse},
+    },
+)
+async def create_ai_attachment_presigned_url(
+    file_id: str,
+    service: UserFileServiceDependency,
+) -> PresignedAttachmentResponse:
+    """Create a fresh presigned URL for one uploaded chat attachment."""
+    try:
+        metadata = await service.get_file(file_id)
+        attachment = await service.create_attachment_response(metadata)
+    except UserFileNotFoundError as exc:
+        raise _http_error(404, "file not found", "file_not_found") from exc
+    except S3ConfigurationError as exc:
+        raise _http_error(500, "S3 file storage is not configured", "s3_not_configured") from exc
+    except S3StorageError as exc:
+        raise _http_error(500, "S3 file storage failed", "s3_storage_failed") from exc
+
+    return PresignedAttachmentResponse(
+        data=PresignedAttachmentData(
+            attachment=attachment,
+            expires_in_seconds=service.settings.presigned_expires_seconds,
+        )
+    )
 
 
 @router.post(

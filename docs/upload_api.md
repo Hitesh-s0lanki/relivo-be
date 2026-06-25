@@ -76,6 +76,34 @@ curl -X POST http://localhost:8000/ai/uploads \
   -F "files[]=@/path/to/diagram.png"
 ```
 
+## Refresh Presigned URL
+
+Use this endpoint when the frontend has a durable `providerFileId` and needs a fresh
+preview/download URL:
+
+```http
+GET /ai/uploads/{providerFileId}/presigned-url
+```
+
+Response:
+
+```json
+{
+  "success": true,
+  "data": {
+    "attachment": {
+      "id": "file-id",
+      "url": "https://fresh-s3-presigned-url.example/screenshot.png",
+      "mediaType": "image/png",
+      "title": "screenshot.png",
+      "size": 123456,
+      "providerFileId": "file-id"
+    },
+    "expiresInSeconds": 3600
+  }
+}
+```
+
 ## Chat Payload
 
 Pass the returned attachment objects into chat:

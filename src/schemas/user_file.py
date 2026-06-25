@@ -48,6 +48,22 @@ class UploadsResponse(BaseModel):
     data: UploadsData
 
 
+class PresignedAttachmentData(BaseModel):
+    """Data envelope for a refreshed attachment URL."""
+
+    model_config = ConfigDict(populate_by_name=True)
+
+    attachment: UploadedAttachment
+    expires_in_seconds: int = Field(..., serialization_alias="expiresInSeconds", ge=1)
+
+
+class PresignedAttachmentResponse(BaseModel):
+    """Response body for refreshing one attachment URL."""
+
+    success: bool = True
+    data: PresignedAttachmentData
+
+
 class UserFileResponse(BaseModel):
     """Uploaded file metadata response body."""
 
