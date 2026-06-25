@@ -167,8 +167,7 @@ def test_orchestrator_prompt_is_loaded_from_markdown() -> None:
     assert ORCHESTRATOR_AGENT_NAME == "Orchestrator"
     assert "Relivo stateful streaming chat agent" in prompt
     assert (
-        "Call memory_context before answering requests that depend on saved user identity"
-        in prompt
+        "Call memory_context before answering requests that depend on saved user identity" in prompt
     )
     assert "Use tools for current or verifiable information" in prompt
 

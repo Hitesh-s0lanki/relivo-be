@@ -83,8 +83,7 @@ async def memory_search(
     return {
         "status": "found",
         "results": [
-            memory_payload(result.memory, similarity=result.similarity)
-            for result in results
+            memory_payload(result.memory, similarity=result.similarity) for result in results
         ],
     }
 

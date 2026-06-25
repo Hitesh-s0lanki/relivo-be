@@ -72,9 +72,7 @@ class MemoryService:
             else build_memory_embedding_provider()
         )
         self.min_similarity = (
-            min_similarity
-            if min_similarity is not None
-            else memory_rag_min_similarity()
+            min_similarity if min_similarity is not None else memory_rag_min_similarity()
         )
 
     async def commit_memory(
@@ -191,8 +189,7 @@ class MemoryService:
             }
 
         memories = [
-            memory_payload(result.memory, similarity=result.similarity)
-            for result in results
+            memory_payload(result.memory, similarity=result.similarity) for result in results
         ]
         return {
             "status": "found",
@@ -347,11 +344,7 @@ class MemoryService:
         if types:
             statement = statement.where(Memory.type.in_(types))
         result = await self.session.execute(statement.order_by(Memory.updated_at.desc()))
-        memories = [
-            memory
-            for memory in result.scalars().all()
-            if tags_match(memory.tags, tags)
-        ]
+        memories = [memory for memory in result.scalars().all() if tags_match(memory.tags, tags)]
         scored = [
             MemorySearchResult(memory=memory, similarity=text_similarity(query, memory))
             for memory in memories
@@ -381,9 +374,13 @@ class MemoryService:
         status: str,
     ) -> bool:
         """Return whether any memories could satisfy filters before vector search."""
-        statement = select(func.count()).select_from(Memory).where(
-            Memory.user_id == user_id,
-            Memory.status == status,
+        statement = (
+            select(func.count())
+            .select_from(Memory)
+            .where(
+                Memory.user_id == user_id,
+                Memory.status == status,
+            )
         )
         if types:
             statement = statement.where(Memory.type.in_(types))
