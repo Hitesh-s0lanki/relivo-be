@@ -1,6 +1,5 @@
 """Chat HTTP controller."""
 
-import logging
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException
@@ -12,11 +11,10 @@ from src.database import get_db_session
 from src.schemas.chat import ChatErrorResponse, ChatRequest
 from src.services.chat_service import ChatService
 from src.services.conversation_service import ConversationService
-from src.utils.error_response import build_error_response, log_error_response
+from src.utils.error_response import build_error_response
 
 router = APIRouter()
 ChatAgentDependency = Depends(get_chat_agent)
-logger = logging.getLogger(__name__)
 
 
 def get_chat_service(
@@ -119,7 +117,6 @@ async def chat(
             message="user_message cannot be blank",
             error_tag="blank_user_message",
         )
-        log_error_response(logger, error)
         raise HTTPException(status_code=422, detail=error.model_dump())
 
     return StreamingResponse(

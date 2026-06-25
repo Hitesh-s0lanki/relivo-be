@@ -141,7 +141,7 @@ def test_orchestrator_prompt_is_loaded_from_markdown() -> None:
 
     assert ORCHESTRATOR_AGENT_NAME == "Orchestrator"
     assert "You are Orchestrator" in prompt
-    assert "Use tools only when they add useful context" in prompt
+    assert "Use tools only when they improve accuracy" in prompt
 
 
 def test_build_openai_chat_model_uses_env_overrides(monkeypatch) -> None:

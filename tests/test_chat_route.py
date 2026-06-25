@@ -191,6 +191,7 @@ async def test_chat_rejects_blank_message(caplog: pytest.LogCaptureFixture) -> N
     assert "error.message=user_message cannot be blank" in caplog.text
     assert "error.error_tag=blank_user_message" in caplog.text
     assert "error response generated" in caplog.text
+    assert caplog.text.count("error response generated") == 1
 
 
 @pytest.mark.asyncio
