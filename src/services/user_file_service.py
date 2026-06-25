@@ -110,12 +110,7 @@ def get_s3_file_settings() -> S3FileSettings:
     )
     return S3FileSettings(
         bucket=bucket,
-        region_name=(
-            os.getenv("AWS_S3_BUCKET_REGION")
-            or os.getenv("AWS_S3_REGION")
-            or os.getenv("AWS_REGION")
-            or os.getenv("AWS_DEFAULT_REGION", "us-east-1")
-        ),
+        region_name=os.getenv("AWS_REGION") or os.getenv("AWS_DEFAULT_REGION", "us-east-1"),
         endpoint_url=os.getenv("AWS_S3_ENDPOINT_URL"),
         key_prefix=os.getenv("AWS_S3_KEY_PREFIX", "user-files").strip("/"),
         presigned_expires_seconds=expires,
@@ -138,6 +133,9 @@ class UserFileService:
         self.session = session
         self._settings = settings
         self._s3_client = s3_client
+        self._s3_client_was_injected = s3_client is not None
+        self._bucket_region_name: str | None = None
+        self._bucket_region_s3_client: Any | None = None
 
     @property
     def settings(self) -> S3FileSettings:
@@ -240,7 +238,7 @@ class UserFileService:
         try:
             response = await anyio.to_thread.run_sync(
                 partial(
-                    self.s3_client.get_object,
+                    (await self._s3_client_for_bucket()).get_object,
                     Bucket=metadata.s3_bucket,
                     Key=metadata.s3_key,
                 )
@@ -266,7 +264,7 @@ class UserFileService:
         try:
             url = await anyio.to_thread.run_sync(
                 partial(
-                    self.s3_client.generate_presigned_url,
+                    (await self._s3_client_for_bucket()).generate_presigned_url,
                     "get_object",
                     Params=params,
                     ExpiresIn=self.settings.presigned_expires_seconds,
@@ -283,7 +281,7 @@ class UserFileService:
         try:
             await anyio.to_thread.run_sync(
                 partial(
-                    self.s3_client.delete_object,
+                    (await self._s3_client_for_bucket()).delete_object,
                     Bucket=metadata.s3_bucket,
                     Key=metadata.s3_key,
                 )
@@ -295,11 +293,47 @@ class UserFileService:
         await self.session.commit()
 
     def _build_s3_client(self) -> Any:
-        session = boto3.session.Session(region_name=self.settings.region_name)
+        return self._build_s3_client_for_region(self.settings.region_name)
+
+    def _build_s3_client_for_region(self, region_name: str) -> Any:
+        session = boto3.session.Session(region_name=region_name)
         kwargs: dict[str, str] = {}
         if self.settings.endpoint_url:
             kwargs["endpoint_url"] = self.settings.endpoint_url
-        return session.client("s3", **kwargs)
+        return session.client("s3", region_name=region_name, **kwargs)
+
+    async def _s3_client_for_bucket(self) -> Any:
+        if self._s3_client_was_injected or self.settings.endpoint_url:
+            return self.s3_client
+
+        region_name = await self._resolve_bucket_region_name()
+        if region_name == self.settings.region_name:
+            return self.s3_client
+
+        if self._bucket_region_s3_client is None:
+            self._bucket_region_s3_client = self._build_s3_client_for_region(region_name)
+        return self._bucket_region_s3_client
+
+    async def _resolve_bucket_region_name(self) -> str:
+        if self._bucket_region_name is not None:
+            return self._bucket_region_name
+
+        try:
+            lookup_client = self._build_s3_client_for_region("us-east-1")
+            response = await anyio.to_thread.run_sync(
+                partial(
+                    lookup_client.get_bucket_location,
+                    Bucket=self.settings.bucket,
+                )
+            )
+        except (BotoCoreError, ClientError):
+            self._bucket_region_name = self.settings.region_name
+            return self._bucket_region_name
+
+        self._bucket_region_name = _normalize_bucket_location(
+            response.get("LocationConstraint")
+        )
+        return self._bucket_region_name
 
     def _build_s3_key(self, *, user_id: str, file_id: str, filename: str) -> str:
         user_segment = _sanitize_key_segment(user_id)
@@ -316,12 +350,12 @@ class UserFileService:
         if self.settings.kms_key_id:
             extra_args["SSEKMSKeyId"] = self.settings.kms_key_id
 
-        await anyio.to_thread.run_sync(
-            partial(
-                self.s3_client.upload_fileobj,
-                BytesIO(contents),
-                self.settings.bucket,
-                s3_key,
+            await anyio.to_thread.run_sync(
+                partial(
+                    (await self._s3_client_for_bucket()).upload_fileobj,
+                    BytesIO(contents),
+                    self.settings.bucket,
+                    s3_key,
                 ExtraArgs=extra_args,
             )
         )
@@ -330,7 +364,7 @@ class UserFileService:
         try:
             await anyio.to_thread.run_sync(
                 partial(
-                    self.s3_client.delete_object,
+                    (await self._s3_client_for_bucket()).delete_object,
                     Bucket=self.settings.bucket,
                     Key=s3_key,
                 )
@@ -363,3 +397,11 @@ def _sanitize_key_segment(value: str) -> str:
 
 def _content_disposition(filename: str) -> str:
     return f'attachment; filename="{_sanitize_filename(filename)}"'
+
+
+def _normalize_bucket_location(location_constraint: str | None) -> str:
+    if not location_constraint:
+        return "us-east-1"
+    if location_constraint == "EU":
+        return "eu-west-1"
+    return location_constraint

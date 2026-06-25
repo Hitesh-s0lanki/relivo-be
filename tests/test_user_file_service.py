@@ -53,12 +53,14 @@ class FakeSession:
 class FakeS3Client:
     """S3 client double that records object operations."""
 
-    def __init__(self) -> None:
+    def __init__(self, region_name: str = "us-east-1") -> None:
         """Initialize empty call history."""
+        self.region_name = region_name
         self.uploads = []
         self.deletes = []
         self.presign_calls = []
         self.objects = {}
+        self.location_constraint = region_name
 
     def upload_fileobj(self, fileobj, bucket: str, key: str, **kwargs) -> None:
         self.uploads.append(
@@ -87,6 +89,9 @@ class FakeS3Client:
         key = kwargs["Key"]
         return {"Body": BytesIO(self.objects[key])}
 
+    def get_bucket_location(self, **_kwargs):
+        return {"LocationConstraint": self.location_constraint}
+
 
 @pytest.fixture
 def settings() -> S3FileSettings:
@@ -112,16 +117,15 @@ def upload_file(filename: str, contents: bytes, content_type: str) -> UploadFile
     )
 
 
-def test_s3_settings_prefer_bucket_region_over_app_region(monkeypatch) -> None:
-    """Presigned URLs must use the bucket region, not necessarily the app region."""
+def test_s3_settings_use_app_region_as_default_client_region(monkeypatch) -> None:
+    """AWS_REGION remains the default S3 client region."""
     monkeypatch.setenv("AWS_S3_BUCKET", "relivo.chat")
     monkeypatch.setenv("AWS_REGION", "ap-south-1")
-    monkeypatch.setenv("AWS_S3_BUCKET_REGION", "us-east-1")
 
     settings = get_s3_file_settings()
 
     assert settings.bucket == "relivo.chat"
-    assert settings.region_name == "us-east-1"
+    assert settings.region_name == "ap-south-1"
 
 
 @pytest.mark.asyncio
@@ -243,6 +247,44 @@ async def test_create_download_url_uses_metadata_and_expiry(settings: S3FileSett
             "expires_in": 900,
         }
     ]
+
+
+@pytest.mark.asyncio
+async def test_create_download_url_auto_detects_bucket_region(settings: S3FileSettings) -> None:
+    """Presigned URLs should use the bucket's detected region when it differs."""
+    settings = S3FileSettings(
+        bucket="test-bucket",
+        region_name="ap-south-1",
+        endpoint_url=None,
+        key_prefix="uploads",
+        presigned_expires_seconds=900,
+        max_upload_bytes=16,
+        server_side_encryption=None,
+        kms_key_id=None,
+    )
+    record = SimpleNamespace(
+        s3_bucket="test-bucket",
+        s3_key="uploads/users/user-123/file-id/report.pdf",
+        original_filename="report.pdf",
+        content_type="application/pdf",
+    )
+    clients: dict[str, FakeS3Client] = {}
+    session = FakeSession(record)
+    service = UserFileService(session, settings=settings)
+
+    def build_client(region_name: str) -> FakeS3Client:
+        client = FakeS3Client(region_name)
+        client.location_constraint = None if region_name == "ap-south-1" else region_name
+        clients[region_name] = client
+        return client
+
+    service._build_s3_client_for_region = build_client
+
+    _metadata, url = await service.create_download_url("file-id")
+
+    assert url == "https://files.example.test/uploads/users/user-123/file-id/report.pdf"
+    assert "us-east-1" in clients
+    assert clients["us-east-1"].presign_calls[0]["operation"] == "get_object"
 
 
 @pytest.mark.asyncio

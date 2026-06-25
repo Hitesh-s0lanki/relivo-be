@@ -49,9 +49,7 @@ The app loads from a `.env` file or environment variables. All have defaults:
 | `FIRECRAWL_API_KEY` | unset | Enables authenticated Firecrawl MCP tools for agent web search, scrape, crawl, and parse access |
 | `FIRECRAWL_MCP_ENABLED` | `true` | Toggle Firecrawl MCP tool loading for the chat agent |
 | `FIRECRAWL_MCP_URL` | `https://mcp.firecrawl.dev/v2/mcp` | Firecrawl MCP endpoint. Supports `{FIRECRAWL_API_KEY}` in custom URLs |
-| `AWS_REGION` | `us-east-1` | AWS region for S3 file storage |
-| `AWS_S3_BUCKET_REGION` | falls back to `AWS_REGION` | Actual S3 bucket region used for uploads and presigned URLs |
-| `AWS_S3_REGION` | falls back to `AWS_REGION` | Alias for `AWS_S3_BUCKET_REGION` |
+| `AWS_REGION` | `us-east-1` | Default AWS region for AWS clients |
 | `AWS_ACCESS_KEY_ID` | unset | AWS access key id used by boto3 for S3 |
 | `AWS_SECRET_ACCESS_KEY` | unset | AWS secret access key used by boto3 for S3 |
 | `AWS_S3_BUCKET` | unset | S3 bucket used for user file uploads |
@@ -92,12 +90,8 @@ When those attachments are sent to `/chat`, include `providerFileId` so the back
 read the stored image from S3 and send model-readable image data instead of asking the model
 to download a private URL.
 
-Presigned URLs must be generated for the bucket's actual region. If the app runs in
-`ap-south-1` but the bucket is in `us-east-1`, set:
-
-```bash
-AWS_S3_BUCKET_REGION=us-east-1
-```
+Presigned URLs are generated for the bucket's actual region. The backend detects that region
+from S3, so the app can keep `AWS_REGION=ap-south-1` even if the bucket uses another endpoint.
 
 The lower-level file API remains available:
 
