@@ -228,6 +228,33 @@ async def test_create_download_url_uses_metadata_and_expiry(settings: S3FileSett
 
 
 @pytest.mark.asyncio
+async def test_create_attachment_response_uses_presigned_url(settings: S3FileSettings) -> None:
+    """Attachment responses should expose frontend fields and the stored file id."""
+    record = SimpleNamespace(
+        id="file-id",
+        s3_bucket="metadata-bucket",
+        s3_key="uploads/users/user-123/file-id/avatar.png",
+        original_filename="avatar.png",
+        content_type="image/png",
+        size_bytes=123,
+    )
+    session = FakeSession(record)
+    s3_client = FakeS3Client()
+    service = UserFileService(session, settings=settings, s3_client=s3_client)
+
+    attachment = await service.create_attachment_response(record)
+
+    assert attachment.model_dump(by_alias=True) == {
+        "id": "file-id",
+        "url": "https://files.example.test/uploads/users/user-123/file-id/avatar.png",
+        "mediaType": "image/png",
+        "title": "avatar.png",
+        "size": 123,
+        "providerFileId": "file-id",
+    }
+
+
+@pytest.mark.asyncio
 async def test_delete_file_removes_s3_object_and_metadata(settings: S3FileSettings) -> None:
     """Deleting a file should remove both S3 content and metadata."""
     record = SimpleNamespace(

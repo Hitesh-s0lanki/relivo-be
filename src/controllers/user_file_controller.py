@@ -7,7 +7,14 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.database import get_db_session
 from src.schemas.chat import ChatErrorResponse
-from src.schemas.user_file import FileCategory, UserFileDownloadResponse, UserFileResponse
+from src.schemas.user_file import (
+    FileCategory,
+    UploadsData,
+    UploadsResponse,
+    UserFileDownloadResponse,
+    UserFileResponse,
+)
+from src.services.conversation_service import ConversationNotFoundError, ConversationService
 from src.services.user_file_service import (
     EmptyUploadError,
     S3ConfigurationError,
@@ -19,6 +26,7 @@ from src.services.user_file_service import (
 from src.utils.error_response import build_error_response
 
 router = APIRouter(prefix="/files", tags=["Files"])
+ai_router = APIRouter(prefix="/ai", tags=["AI Uploads"])
 
 
 def get_user_file_service(
@@ -29,6 +37,69 @@ def get_user_file_service(
 
 
 UserFileServiceDependency = Annotated[UserFileService, Depends(get_user_file_service)]
+
+
+def get_upload_conversation_service(
+    session: Annotated[AsyncSession, Depends(get_db_session)],
+) -> ConversationService:
+    """Resolve the conversation service dependency for upload ownership lookup."""
+    return ConversationService(session)
+
+
+UploadConversationServiceDependency = Annotated[
+    ConversationService,
+    Depends(get_upload_conversation_service),
+]
+
+
+@ai_router.post(
+    "/uploads",
+    response_model=UploadsResponse,
+    status_code=status.HTTP_201_CREATED,
+    responses={
+        400: {"description": "Upload request is invalid.", "model": ChatErrorResponse},
+        404: {"description": "Conversation was not found.", "model": ChatErrorResponse},
+        413: {"description": "Uploaded file is too large.", "model": ChatErrorResponse},
+        500: {"description": "S3 file storage failed.", "model": ChatErrorResponse},
+    },
+)
+async def upload_ai_attachments(
+    service: UserFileServiceDependency,
+    conversation_service: UploadConversationServiceDependency,
+    files: Annotated[list[UploadFile], File(alias="files[]")],
+    user_id: Annotated[str | None, Form(alias="userId", min_length=1, max_length=200)] = None,
+    conversation_id: Annotated[
+        str | None,
+        Form(alias="conversationId", min_length=1, max_length=200),
+    ] = None,
+) -> UploadsResponse:
+    """Upload one or more chat attachments to S3 and return attachment references."""
+    if not files:
+        raise _http_error(400, "at least one file is required", "missing_upload_files")
+
+    try:
+        resolved_user_id = await _resolve_upload_user_id(
+            user_id=user_id,
+            conversation_id=conversation_id,
+            conversation_service=conversation_service,
+        )
+        attachments = []
+        for upload in files:
+            metadata = await service.upload_file(user_id=resolved_user_id, upload=upload)
+            attachments.append(await service.create_attachment_response(metadata))
+    except ConversationNotFoundError as exc:
+        raise _http_error(404, "conversation not found", "conversation_not_found") from exc
+    except EmptyUploadError as exc:
+        raise _http_error(400, "uploaded file cannot be empty", "empty_upload") from exc
+    except UploadTooLargeError as exc:
+        max_mb = exc.max_bytes // (1024 * 1024)
+        raise _http_error(413, f"uploaded file exceeds {max_mb} MB", "upload_too_large") from exc
+    except S3ConfigurationError as exc:
+        raise _http_error(500, "S3 file storage is not configured", "s3_not_configured") from exc
+    except S3StorageError as exc:
+        raise _http_error(500, "S3 file storage failed", "s3_storage_failed") from exc
+
+    return UploadsResponse(data=UploadsData(attachments=attachments))
 
 
 @router.post(
@@ -142,3 +213,17 @@ def _http_error(status_code: int, message: str, error_tag: str) -> HTTPException
             error_tag=error_tag,
         ).model_dump(),
     )
+
+
+async def _resolve_upload_user_id(
+    *,
+    user_id: str | None,
+    conversation_id: str | None,
+    conversation_service: ConversationService,
+) -> str:
+    if user_id:
+        return user_id
+    if conversation_id:
+        conversation = await conversation_service.get_conversation(conversation_id)
+        return conversation.user_id
+    raise _http_error(400, "userId or conversationId is required", "missing_upload_owner")

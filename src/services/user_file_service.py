@@ -18,7 +18,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.models import UserFile
 from src.models.common import uuid_str
-from src.schemas.user_file import FileCategory
+from src.schemas.user_file import FileCategory, UploadedAttachment
 
 DOCUMENT_EXTENSIONS = {
     ".csv",
@@ -214,6 +214,22 @@ class UserFileService:
     async def create_download_url(self, file_id: str) -> tuple[UserFile, str]:
         """Create a temporary presigned URL for a stored file."""
         metadata = await self.get_file(file_id)
+        url = await self.create_presigned_download_url(metadata)
+        return metadata, url
+
+    async def create_attachment_response(self, metadata: UserFile) -> UploadedAttachment:
+        """Create a frontend attachment reference for an uploaded file."""
+        return UploadedAttachment(
+            id=metadata.id,
+            url=await self.create_presigned_download_url(metadata),
+            mediaType=metadata.content_type or "application/octet-stream",
+            title=metadata.original_filename,
+            size=metadata.size_bytes,
+            providerFileId=metadata.id,
+        )
+
+    async def create_presigned_download_url(self, metadata: UserFile) -> str:
+        """Create a temporary presigned URL for stored file metadata."""
         params = {
             "Bucket": metadata.s3_bucket,
             "Key": metadata.s3_key,
@@ -234,7 +250,7 @@ class UserFileService:
         except (BotoCoreError, ClientError) as exc:
             raise S3StorageError("failed to create S3 download URL") from exc
 
-        return metadata, url
+        return url
 
     async def delete_file(self, file_id: str) -> None:
         """Delete a file from S3 and remove its metadata."""

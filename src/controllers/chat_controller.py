@@ -111,11 +111,11 @@ async def chat(
     service: ChatService = ChatServiceDependency,
 ) -> StreamingResponse:
     """Stream a chat response as Server-Sent Events."""
-    if not request.user_message.strip():
+    if not request.user_message.strip() and not request.attachments:
         error = build_error_response(
             status=422,
-            message="user_message cannot be blank",
-            error_tag="blank_user_message",
+            message="user_message or attachments is required",
+            error_tag="empty_chat_message",
         )
         raise HTTPException(status_code=422, detail=error.model_dump())
 

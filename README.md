@@ -55,6 +55,7 @@ The app loads from a `.env` file or environment variables. All have defaults:
 ## API
 
 - `POST /chat` — stream an agent response with Server-Sent Events
+- `POST /ai/uploads` — upload chat attachments to S3 and return frontend attachment references
 - `/conversations` — CRUD for conversations and conversation messages
 - `/files` — upload, list, fetch, download, and delete user files stored in S3
 - `GET /docs` — Swagger UI
@@ -63,8 +64,22 @@ The app loads from a `.env` file or environment variables. All have defaults:
 Open `http://localhost:8000/docs` for the full interactive API documentation.
 See `docs/chat_request_api.md` for the chat request API contract.
 See `docs/conversation_api.md` for the conversation API contract.
+See `docs/upload_api.md` for the chat upload API contract.
 
 File uploads are multipart form requests:
+
+```bash
+curl -X POST http://localhost:8000/ai/uploads \
+  -F "userId=user-123" \
+  -F "files[]=@/path/to/screenshot.png"
+```
+
+`/ai/uploads` also accepts `conversationId` instead of `userId`; the backend resolves the
+conversation owner before storing files in S3. The response returns `attachments` with
+`url`, `mediaType`, `title`, `size`, and `providerFileId`. The `url` is a temporary
+presigned S3 URL; keep `providerFileId`/`id` as the durable file reference.
+
+The lower-level file API remains available:
 
 ```bash
 curl -X POST http://localhost:8000/files \

@@ -109,7 +109,7 @@ class FakeConversationService:
             reasoning_entries=[
                 self._reasoning_entry(reasoning) for reasoning in payload.reasoning_entries
             ],
-            message_metadata=payload.metadata,
+            message_metadata=payload.metadata_with_attachments(),
             created_at=now(),
             updated_at=now(),
         )
@@ -134,8 +134,21 @@ class FakeConversationService:
     ) -> SimpleNamespace:
         message = await self.get_message(conversation_id, message_id)
         update_data = payload.model_dump(exclude_unset=True)
-        if "metadata" in update_data:
-            update_data["message_metadata"] = update_data.pop("metadata")
+        if "metadata" in update_data or "attachments" in update_data:
+            update_data.pop("metadata", None)
+            update_data.pop("attachments", None)
+            message_metadata = (
+                payload.metadata
+                if "metadata" in payload.model_fields_set
+                else message.message_metadata
+            )
+            if "attachments" in payload.model_fields_set:
+                message_metadata = dict(message_metadata or {})
+                message_metadata["attachments"] = [
+                    attachment.model_dump(by_alias=True)
+                    for attachment in payload.attachments or []
+                ]
+            update_data["message_metadata"] = message_metadata
         for field, value in update_data.items():
             setattr(message, field, value)
         message.updated_at = now()
@@ -407,6 +420,49 @@ async def test_message_can_contain_multiple_tool_calls_and_reasoning_entries(
     assert body["tool_calls"][1]["name"] == "get_calendar"
     assert len(body["reasoning_entries"]) == 2
     assert body["reasoning_entries"][0]["summary"] == "context"
+
+
+@pytest.mark.asyncio
+async def test_message_can_persist_attachments(
+    fake_service: FakeConversationService,
+) -> None:
+    """User messages can store attachments without requiring text."""
+    app = create_app()
+    app.dependency_overrides[get_conversation_service] = lambda: fake_service
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        conversation = await client.post(
+            "/conversations",
+            json={"user_id": "user-123", "title": "Planning"},
+        )
+        conversation_id = conversation.json()["id"]
+        created = await client.post(
+            f"/conversations/{conversation_id}/messages",
+            json={
+                "role": "user",
+                "attachments": [
+                    {
+                        "url": "https://files.example.test/avatar.png",
+                        "mediaType": "image/png",
+                        "title": "avatar.png",
+                    }
+                ],
+            },
+        )
+        listed = await client.get(f"/conversations/{conversation_id}/messages")
+
+    body = created.json()
+    assert created.status_code == 201
+    assert body["text"] is None
+    assert body["attachments"] == [
+        {
+            "url": "https://files.example.test/avatar.png",
+            "mediaType": "image/png",
+            "title": "avatar.png",
+        }
+    ]
+    assert body["metadata"]["attachments"] == body["attachments"]
+    assert listed.json()[0]["attachments"] == body["attachments"]
 
 
 @pytest.mark.asyncio

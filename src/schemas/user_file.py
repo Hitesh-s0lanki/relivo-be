@@ -3,9 +3,49 @@
 from datetime import datetime
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import AliasChoices, BaseModel, ConfigDict, Field
 
 FileCategory = Literal["image", "document", "file"]
+
+
+class AttachmentInput(BaseModel):
+    """Attachment reference accepted by chat and conversation APIs."""
+
+    model_config = ConfigDict(populate_by_name=True)
+
+    url: str = Field(..., min_length=1)
+    media_type: str = Field(
+        ...,
+        validation_alias=AliasChoices("mediaType", "media_type"),
+        serialization_alias="mediaType",
+        min_length=1,
+    )
+    title: str = Field(..., min_length=1, max_length=500)
+
+
+class UploadedAttachment(AttachmentInput):
+    """Frontend-friendly uploaded attachment response."""
+
+    id: str
+    size: int = Field(..., ge=0)
+    provider_file_id: str = Field(
+        ...,
+        validation_alias=AliasChoices("providerFileId", "provider_file_id"),
+        serialization_alias="providerFileId",
+    )
+
+
+class UploadsData(BaseModel):
+    """Data envelope for uploaded attachments."""
+
+    attachments: list[UploadedAttachment]
+
+
+class UploadsResponse(BaseModel):
+    """Response body for the chat upload API."""
+
+    success: bool = True
+    data: UploadsData
 
 
 class UserFileResponse(BaseModel):

@@ -9,8 +9,10 @@ from typing import Any
 from uuid import UUID
 
 from src.agents import BaseAgent
+from src.agents.base_agent import AgentPrompt
 from src.schemas.chat import ChatRequest
 from src.schemas.conversation import MessageCreate, ToolCallCreate
+from src.schemas.user_file import AttachmentInput
 from src.services.conversation_service import ConversationNotFoundError, ConversationService
 from src.utils.error_response import build_error_response, log_error_response
 
@@ -55,7 +57,7 @@ class ChatService:
 
         yield self._sse_data({"type": "start", "messageId": request.thread_id})
 
-        if response := self._fast_response(request.user_message):
+        if not request.attachments and (response := self._fast_response(request.user_message)):
             yield self._sse_data({"type": "text-start", "id": "text-1"})
             yield self._sse_data({"type": "text-delta", "id": "text-1", "delta": response})
             yield self._sse_data({"type": "text-end", "id": "text-1"})
@@ -65,7 +67,7 @@ class ChatService:
 
         try:
             async for chunk in self.agent.astream_events(
-                request.user_message,
+                self._agent_prompt(request),
                 thread_id=request.thread_id,
                 stream_mode=request.stream_mode,
             ):
@@ -378,6 +380,44 @@ class ChatService:
     def _fast_response(user_message: str) -> str | None:
         normalized = user_message.strip().lower().rstrip("!.")
         return FAST_GREETING_RESPONSES.get(normalized)
+
+    @classmethod
+    def _agent_prompt(cls, request: ChatRequest) -> AgentPrompt:
+        """Build text-only or multimodal agent input from a chat request."""
+        if not request.attachments:
+            return request.user_message
+
+        text = request.user_message.strip() or "Please analyze the attached file."
+        content: list[dict[str, Any]] = [{"type": "text", "text": text}]
+        non_image_lines: list[str] = []
+
+        for attachment in request.attachments:
+            if cls._is_image_attachment(attachment):
+                content.append(
+                    {
+                        "type": "image_url",
+                        "image_url": {"url": attachment.url},
+                    }
+                )
+                continue
+
+            non_image_lines.append(
+                f"- {attachment.title} ({attachment.media_type}): {attachment.url}"
+            )
+
+        if non_image_lines:
+            content.append(
+                {
+                    "type": "text",
+                    "text": "\n\nAttached files:\n" + "\n".join(non_image_lines),
+                }
+            )
+
+        return content
+
+    @staticmethod
+    def _is_image_attachment(attachment: AttachmentInput) -> bool:
+        return attachment.media_type.split(";")[0].strip().lower().startswith("image/")
 
     @staticmethod
     def _sse_data(data: dict[str, Any] | str) -> str:

@@ -38,9 +38,11 @@ class StreamingAgent:
     def __init__(self) -> None:
         """Initialize the call marker."""
         self.called = False
+        self.prompts = []
 
-    async def astream_events(self, *_args, **_kwargs):
+    async def astream_events(self, *args, **_kwargs):
         self.called = True
+        self.prompts.append(args[0])
         yield {
             "type": "messages",
             "data": (
@@ -253,6 +255,42 @@ async def test_stream_chat_uses_agent_for_non_greeting() -> None:
     ]
 
     assert agent.called is True
+    assert agent.prompts == ["help me plan"]
+    assert 'data: {"type": "text-delta", "id": "text-1", "delta": "Planned"}\n\n' in events
+
+
+@pytest.mark.asyncio
+async def test_stream_chat_builds_multimodal_prompt_for_attachments() -> None:
+    """Image attachments should be passed to the agent as image URL content parts."""
+    agent = StreamingAgent()
+    service = ChatService(agent)
+
+    events = [
+        event
+        async for event in service.stream_chat(
+            ChatRequest(
+                user_message="",
+                thread_id="user-123",
+                attachments=[
+                    {
+                        "url": "https://files.example.test/avatar.png",
+                        "mediaType": "image/png",
+                        "title": "avatar.png",
+                    }
+                ],
+            )
+        )
+    ]
+
+    assert agent.prompts == [
+        [
+            {"type": "text", "text": "Please analyze the attached file."},
+            {
+                "type": "image_url",
+                "image_url": {"url": "https://files.example.test/avatar.png"},
+            },
+        ]
+    ]
     assert 'data: {"type": "text-delta", "id": "text-1", "delta": "Planned"}\n\n' in events
 
 

@@ -7,8 +7,13 @@ from uuid import uuid4
 import pytest
 from httpx import ASGITransport, AsyncClient
 
-from src.controllers.user_file_controller import get_user_file_service
+from src.controllers.user_file_controller import (
+    get_upload_conversation_service,
+    get_user_file_service,
+)
 from src.main import create_app
+from src.schemas.user_file import UploadedAttachment
+from src.services.conversation_service import ConversationNotFoundError
 from src.services.user_file_service import EmptyUploadError, UserFileNotFoundError
 
 
@@ -66,10 +71,36 @@ class FakeUserFileService:
         metadata = await self.get_file(file_id)
         return metadata, f"https://example.test/{metadata.s3_key}"
 
+    async def create_attachment_response(self, metadata: SimpleNamespace) -> UploadedAttachment:
+        return UploadedAttachment(
+            id=metadata.id,
+            url=f"https://example.test/{metadata.s3_key}",
+            mediaType=metadata.content_type,
+            title=metadata.original_filename,
+            size=metadata.size_bytes,
+            providerFileId=metadata.id,
+        )
+
     async def delete_file(self, file_id: str) -> None:
         if file_id not in self.files:
             raise UserFileNotFoundError(file_id)
         del self.files[file_id]
+
+
+class FakeConversationService:
+    """In-memory conversation service for upload ownership lookup."""
+
+    def __init__(self) -> None:
+        """Initialize fake conversations."""
+        self.conversations = {
+            "conversation-123": SimpleNamespace(id="conversation-123", user_id="user-123")
+        }
+
+    async def get_conversation(self, conversation_id: str) -> SimpleNamespace:
+        conversation = self.conversations.get(conversation_id)
+        if conversation is None:
+            raise ConversationNotFoundError(conversation_id)
+        return conversation
 
 
 @pytest.mark.asyncio
@@ -94,6 +125,41 @@ async def test_upload_and_list_user_files() -> None:
     assert uploaded["file_category"] == "image"
     assert list_response.status_code == 200
     assert [item["id"] for item in list_response.json()] == [uploaded["id"]]
+
+
+@pytest.mark.asyncio
+async def test_upload_ai_attachments_returns_frontend_attachment_shape() -> None:
+    """AI upload route should upload multiple files and return attachment references."""
+    app = create_app()
+    file_service = FakeUserFileService()
+    app.dependency_overrides[get_user_file_service] = lambda: file_service
+    app.dependency_overrides[get_upload_conversation_service] = lambda: FakeConversationService()
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        response = await client.post(
+            "/ai/uploads",
+            data={"conversationId": "conversation-123"},
+            files=[
+                ("files[]", ("avatar.png", b"image-bytes", "image/png")),
+                ("files[]", ("notes.txt", b"hello", "text/plain")),
+            ],
+        )
+
+    assert response.status_code == 201
+    body = response.json()
+    assert body["success"] is True
+    assert len(body["data"]["attachments"]) == 2
+    assert body["data"]["attachments"][0] == {
+        "id": body["data"]["attachments"][0]["id"],
+        "url": (
+            "https://example.test/user-files/users/user-123/"
+            f"{body['data']['attachments'][0]['id']}/avatar.png"
+        ),
+        "mediaType": "image/png",
+        "title": "avatar.png",
+        "size": len(b"image-bytes"),
+        "providerFileId": body["data"]["attachments"][0]["id"],
+    }
 
 
 @pytest.mark.asyncio
