@@ -21,7 +21,7 @@ from src.tools import (
     firecrawl_mcp_auth_config,
     firecrawl_mcp_url,
     load_firecrawl_mcp_tools,
-    read_uploaded_file,
+    read_chat_attachment,
 )
 
 
@@ -217,7 +217,7 @@ async def test_load_orchestrator_tools_keeps_local_tool_when_firecrawl_fails(mon
 
     assert len(tools) == 2
     assert tools[0].name == "get_demo_context"
-    assert tools[1].name == read_uploaded_file.name
+    assert tools[1].name == read_chat_attachment.name
 
 
 def test_env_bool_handles_common_truthy_values(monkeypatch) -> None:
@@ -376,7 +376,7 @@ async def test_stream_chat_passes_document_attachments_as_file_refs() -> None:
     file_block = prompt[1]["text"]
     assert "[FILES]" in file_block
     assert "providerFileId: file-id" in file_block
-    assert "read_uploaded_file" in file_block
+    assert "read_chat_attachment" in file_block
     assert "https://private.example.test" not in file_block
     assert 'data: {"type": "text-delta", "id": "text-1", "delta": "Planned"}\n\n' in events
 

@@ -416,7 +416,7 @@ class ChatService:
                     "type": "text",
                     "text": (
                         "\n\n[FILES]\n" + "\n".join(non_image_lines) + "\n[/FILES]\n"
-                        "Use read_uploaded_file(provider_file_id=<ref>) when you need "
+                        "Use read_chat_attachment(provider_file_id=<ref>) when you need "
                         "attachment contents. Do not fetch uploaded file refs with web tools."
                     ),
                 }

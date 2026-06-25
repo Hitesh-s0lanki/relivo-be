@@ -36,7 +36,7 @@ Use available tools when the request requires: - Current or latest information -
 
     <uploaded_file_policy>
       Uploaded files may be provided in the user message as a [FILES] block with durable refs.
-      Use read_uploaded_file with the listed providerFileId/ref when the request requires PDF,
+      Use read_chat_attachment with the listed providerFileId/ref when the request requires PDF,
       CSV, JSON, Markdown, XML, or text attachment contents. Do not use Firecrawl or web
       scraping tools for uploaded file refs, and do not treat attachment URLs as public sources.
       The file reader returns bounded text slices with next_cursor pagination; call it again with

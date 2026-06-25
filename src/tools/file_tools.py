@@ -37,7 +37,7 @@ class UnsupportedFileReadError(Exception):
 
 
 @tool
-async def read_uploaded_file(
+async def read_chat_attachment(
     provider_file_id: str,
     cursor: int = 0,
     max_chars: int = DEFAULT_FILE_READ_CHARS,
