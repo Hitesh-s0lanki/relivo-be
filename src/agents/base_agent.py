@@ -165,7 +165,14 @@ class BaseAgent:
 
     @staticmethod
     def _run_kwargs(thread_id: str, context: Any | None) -> dict[str, Any]:
-        kwargs: dict[str, Any] = {"config": {"configurable": {"thread_id": thread_id}}}
+        configurable: dict[str, Any] = {"thread_id": thread_id}
+        if isinstance(context, dict):
+            for key in ("user_id", "agent_id", "conversation_id"):
+                value = context.get(key)
+                if value is not None:
+                    configurable[key] = value
+
+        kwargs: dict[str, Any] = {"config": {"configurable": configurable}}
         if context is not None:
             kwargs["context"] = context
         return kwargs

@@ -36,6 +36,21 @@ def test_base_agent_streams_raw_agent_events() -> None:
     assert {event["type"] for event in events} == {"messages", "updates"}
 
 
+def test_base_agent_adds_context_to_configurable_runtime() -> None:
+    """Trusted context should be available to tools through RunnableConfig."""
+    kwargs = BaseAgent._run_kwargs(
+        thread_id="thread-1",
+        context={"user_id": "user-1", "agent_id": "agent-1", "ignored": "value"},
+    )
+
+    assert kwargs["config"]["configurable"] == {
+        "thread_id": "thread-1",
+        "user_id": "user-1",
+        "agent_id": "agent-1",
+    }
+    assert kwargs["context"] == {"user_id": "user-1", "agent_id": "agent-1", "ignored": "value"}
+
+
 @pytest.mark.asyncio
 async def test_base_agent_streams_async_text_chunks() -> None:
     """The async stream should yield only assistant text chunks."""

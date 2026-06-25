@@ -9,7 +9,15 @@ from langchain_core.language_models.fake_chat_models import FakeListChatModel
 from langchain_openai import ChatOpenAI
 
 from src.agents.base_agent import AgentTool, BaseAgent, BaseAgentConfig
-from src.tools import get_demo_context, load_firecrawl_mcp_tools, read_chat_attachment
+from src.tools import (
+    get_demo_context,
+    load_firecrawl_mcp_tools,
+    memory_commit,
+    memory_context,
+    memory_search,
+    memory_supersede,
+    read_chat_attachment,
+)
 
 ORCHESTRATOR_AGENT_NAME = "Orchestrator"
 DEFAULT_CHAT_MODEL = "gpt-5-mini"
@@ -76,7 +84,14 @@ async def build_orchestrator_agent() -> BaseAgent:
 
 async def load_orchestrator_tools() -> list[AgentTool]:
     """Load all tools available to the real Orchestrator model."""
-    tools: list[AgentTool] = [get_demo_context, read_chat_attachment]
+    tools: list[AgentTool] = [
+        get_demo_context,
+        read_chat_attachment,
+        memory_context,
+        memory_search,
+        memory_commit,
+        memory_supersede,
+    ]
     try:
         tools.extend(await load_firecrawl_mcp_tools())
     except Exception as exc:

@@ -8,6 +8,12 @@ from src.tools.firecrawl_mcp import (
     firecrawl_mcp_url,
     load_firecrawl_mcp_tools,
 )
+from src.tools.memory_tools import (
+    memory_commit,
+    memory_context,
+    memory_search,
+    memory_supersede,
+)
 
 __all__ = [
     "DEFAULT_FIRECRAWL_MCP_URL",
@@ -15,5 +21,9 @@ __all__ = [
     "firecrawl_mcp_url",
     "get_demo_context",
     "load_firecrawl_mcp_tools",
+    "memory_commit",
+    "memory_context",
+    "memory_search",
+    "memory_supersede",
     "read_chat_attachment",
 ]

@@ -24,6 +24,7 @@ class FakeStreamingAgent:
         prompt,
         *,
         thread_id: str,
+        context=None,
         stream_mode: tuple[str, ...],
     ) -> AsyncIterator[dict]:
         self.prompts.append(prompt)
@@ -62,6 +63,7 @@ class FailingStreamingAgent:
         prompt: str,
         *,
         thread_id: str,
+        context=None,
         stream_mode: tuple[str, ...],
     ) -> AsyncIterator[dict]:
         yield {

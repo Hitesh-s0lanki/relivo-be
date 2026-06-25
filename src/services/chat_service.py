@@ -14,6 +14,7 @@ from src.schemas.chat import ChatRequest
 from src.schemas.conversation import MessageCreate, ToolCallCreate
 from src.schemas.user_file import AttachmentInput
 from src.services.conversation_service import ConversationNotFoundError, ConversationService
+from src.services.memory_extraction_service import run_memory_extraction_for_chat_turn
 from src.services.user_file_service import (
     S3StorageError,
     UserFileNotFoundError,
@@ -28,6 +29,7 @@ FAST_GREETING_RESPONSES = {
     "hi": "Hi! How can I help?",
     "hey": "Hey! How can I help?",
 }
+_MEMORY_EXTRACTION_TASKS: set[asyncio.Task[None]] = set()
 
 
 @dataclass(slots=True)
@@ -74,9 +76,11 @@ class ChatService:
             return
 
         try:
+            agent_context = await self._agent_context(request)
             async for chunk in self.agent.astream_events(
                 await self._agent_prompt(request),
                 thread_id=request.thread_id,
+                context=agent_context,
                 stream_mode=request.stream_mode,
             ):
                 for part in self._normalize_agent_chunk(chunk):
@@ -103,8 +107,10 @@ class ChatService:
                 }
             )
         finally:
+            assistant_text = "".join(text_parts)
             if not stream_failed:
-                await self._persist_tool_chat(request, "".join(text_parts), tool_calls)
+                await self._persist_tool_chat(request, assistant_text, tool_calls)
+                self._schedule_memory_extraction(request, assistant_text)
             if text_started:
                 yield self._sse_data({"type": "text-end", "id": "text-1"})
             yield self._sse_data({"type": "finish"})
@@ -383,6 +389,50 @@ class ChatService:
         except ValueError:
             return False
         return True
+
+    async def _agent_context(self, request: ChatRequest) -> dict[str, Any]:
+        """Build trusted runtime context hidden from model-facing tool schemas."""
+        context: dict[str, Any] = {
+            "thread_id": request.thread_id,
+            "agent_id": self._agent_name(),
+        }
+        if not self.conversation_service or not self._is_uuid(request.thread_id):
+            return context
+        get_conversation = getattr(self.conversation_service, "get_conversation", None)
+        if get_conversation is None:
+            return context
+
+        try:
+            conversation = await get_conversation(request.thread_id)
+        except ConversationNotFoundError:
+            return context
+
+        context["conversation_id"] = str(conversation.id)
+        context["user_id"] = str(conversation.user_id)
+        return context
+
+    def _schedule_memory_extraction(self, request: ChatRequest, assistant_text: str) -> None:
+        """Schedule best-effort memory extraction without blocking the stream close."""
+        if not self._is_uuid(request.thread_id) or not request.user_message.strip():
+            return
+        if not assistant_text.strip():
+            return
+
+        task = asyncio.create_task(
+            run_memory_extraction_for_chat_turn(
+                conversation_id=request.thread_id,
+                user_message=request.user_message,
+                assistant_text=assistant_text,
+                agent_id=self._agent_name(),
+            )
+        )
+        _MEMORY_EXTRACTION_TASKS.add(task)
+        task.add_done_callback(_MEMORY_EXTRACTION_TASKS.discard)
+
+    def _agent_name(self) -> str:
+        """Return the configured agent name with a stable fallback for tests."""
+        config = getattr(self.agent, "config", None)
+        return str(getattr(config, "name", None) or "Orchestrator")
 
     @staticmethod
     def _fast_response(user_message: str) -> str | None:
