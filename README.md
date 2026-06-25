@@ -86,6 +86,9 @@ curl -X POST http://localhost:8000/ai/uploads \
 conversation owner before storing files in S3. The response returns `attachments` with
 `url`, `mediaType`, `title`, `size`, and `providerFileId`. The `url` is a temporary
 presigned S3 URL; keep `providerFileId`/`id` as the durable file reference.
+When those attachments are sent to `/chat`, include `providerFileId` so the backend can
+read the stored image from S3 and send model-readable image data instead of asking the model
+to download a private URL.
 
 The lower-level file API remains available:
 

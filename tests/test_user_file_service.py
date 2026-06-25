@@ -57,6 +57,7 @@ class FakeS3Client:
         self.uploads = []
         self.deletes = []
         self.presign_calls = []
+        self.objects = {}
 
     def upload_fileobj(self, fileobj, bucket: str, key: str, **kwargs) -> None:
         self.uploads.append(
@@ -80,6 +81,10 @@ class FakeS3Client:
             }
         )
         return f"https://files.example.test/{kwargs['Params']['Key']}"
+
+    def get_object(self, **kwargs):
+        key = kwargs["Key"]
+        return {"Body": BytesIO(self.objects[key])}
 
 
 @pytest.fixture
@@ -252,6 +257,28 @@ async def test_create_attachment_response_uses_presigned_url(settings: S3FileSet
         "size": 123,
         "providerFileId": "file-id",
     }
+
+
+@pytest.mark.asyncio
+async def test_create_data_url_reads_s3_object(settings: S3FileSettings) -> None:
+    """Stored files can be returned as model-readable data URLs."""
+    record = SimpleNamespace(
+        id="file-id",
+        s3_bucket="metadata-bucket",
+        s3_key="uploads/users/user-123/file-id/avatar.png",
+        original_filename="avatar.png",
+        content_type="image/png",
+        size_bytes=5,
+    )
+    session = FakeSession(record)
+    s3_client = FakeS3Client()
+    s3_client.objects[record.s3_key] = b"image"
+    service = UserFileService(session, settings=settings, s3_client=s3_client)
+
+    metadata, data_url = await service.create_data_url("file-id")
+
+    assert metadata is record
+    assert data_url == "data:image/png;base64,aW1hZ2U="
 
 
 @pytest.mark.asyncio

@@ -123,6 +123,19 @@ class FakeConversationPersistence:
         return SimpleNamespace(id="tool-call-id")
 
 
+class FakeUserFileLookup:
+    """Fake file service that returns model-readable data URLs."""
+
+    def __init__(self) -> None:
+        """Initialize captured file ids."""
+        self.file_ids = []
+
+    async def create_data_url(self, file_id: str):
+        """Return a deterministic data URL."""
+        self.file_ids.append(file_id)
+        return SimpleNamespace(id=file_id), f"data:image/png;base64,{file_id}"
+
+
 def test_build_openai_chat_model_uses_reasoning_defaults(monkeypatch) -> None:
     """The configured OpenAI model should default to reasoning settings."""
     monkeypatch.delenv("RELIVO_CHAT_MODEL", raising=False)
@@ -288,6 +301,45 @@ async def test_stream_chat_builds_multimodal_prompt_for_attachments() -> None:
             {
                 "type": "image_url",
                 "image_url": {"url": "https://files.example.test/avatar.png"},
+            },
+        ]
+    ]
+    assert 'data: {"type": "text-delta", "id": "text-1", "delta": "Planned"}\n\n' in events
+
+
+@pytest.mark.asyncio
+async def test_stream_chat_resolves_uploaded_image_to_data_url() -> None:
+    """Uploaded image attachments should avoid passing private S3 URLs to OpenAI."""
+    agent = StreamingAgent()
+    file_lookup = FakeUserFileLookup()
+    service = ChatService(agent, user_file_service=file_lookup)
+
+    events = [
+        event
+        async for event in service.stream_chat(
+            ChatRequest(
+                user_message="What is this?",
+                thread_id="user-123",
+                attachments=[
+                    {
+                        "id": "file-id",
+                        "url": "https://files.example.test/avatar.png",
+                        "mediaType": "image/png",
+                        "title": "avatar.png",
+                        "providerFileId": "file-id",
+                    }
+                ],
+            )
+        )
+    ]
+
+    assert file_lookup.file_ids == ["file-id"]
+    assert agent.prompts == [
+        [
+            {"type": "text", "text": "What is this?"},
+            {
+                "type": "image_url",
+                "image_url": {"url": "data:image/png;base64,file-id"},
             },
         ]
     ]

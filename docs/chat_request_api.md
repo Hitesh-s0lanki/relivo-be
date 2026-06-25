@@ -58,7 +58,8 @@ Example:
     {
       "url": "https://s3-presigned-url.example/avatar.png",
       "mediaType": "image/png",
-      "title": "avatar.png"
+      "title": "avatar.png",
+      "providerFileId": "file-id"
     }
   ]
 }
@@ -81,14 +82,17 @@ Attachment-only example:
     {
       "url": "https://s3-presigned-url.example/screenshot.png",
       "mediaType": "image/png",
-      "title": "screenshot.png"
+      "title": "screenshot.png",
+      "providerFileId": "file-id"
     }
   ]
 }
 ```
 
-Image attachments are sent to the model as image URL content parts. Non-image attachments are
-included in the prompt as file title, media type, and URL references.
+Image attachments uploaded through `/ai/uploads` are read back from S3 using
+`providerFileId` and sent to the model as data URL image content parts. This avoids model
+download failures for private or presigned S3 URLs. Non-image attachments are included in the
+prompt as file title, media type, and URL references.
 
 ## Response
 
@@ -190,7 +194,7 @@ Then pass those attachments into chat:
 ```bash
 curl -N -X POST http://localhost:8000/chat \
   -H "Content-Type: application/json" \
-  -d '{"user_message":"What is in this image?","thread_id":"conversation-id","attachments":[{"url":"https://s3-presigned-url.example/screenshot.png","mediaType":"image/png","title":"screenshot.png"}]}'
+  -d '{"user_message":"What is in this image?","thread_id":"conversation-id","attachments":[{"url":"https://s3-presigned-url.example/screenshot.png","mediaType":"image/png","title":"screenshot.png","providerFileId":"file-id"}]}'
 ```
 
 ## JavaScript Client
@@ -230,6 +234,7 @@ type ChatRequest = {
     url: string;
     mediaType: string;
     title: string;
+    providerFileId?: string;
   }>;
 };
 

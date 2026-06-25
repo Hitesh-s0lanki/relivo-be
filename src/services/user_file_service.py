@@ -1,5 +1,6 @@
 """S3-backed user file service."""
 
+import base64
 import hashlib
 import os
 import re
@@ -227,6 +228,25 @@ class UserFileService:
             size=metadata.size_bytes,
             providerFileId=metadata.id,
         )
+
+    async def create_data_url(self, file_id: str) -> tuple[UserFile, str]:
+        """Read a stored file from S3 and return a base64 data URL."""
+        metadata = await self.get_file(file_id)
+        try:
+            response = await anyio.to_thread.run_sync(
+                partial(
+                    self.s3_client.get_object,
+                    Bucket=metadata.s3_bucket,
+                    Key=metadata.s3_key,
+                )
+            )
+            contents = await anyio.to_thread.run_sync(response["Body"].read)
+        except (BotoCoreError, ClientError, KeyError) as exc:
+            raise S3StorageError("failed to read file from S3") from exc
+
+        media_type = metadata.content_type or "application/octet-stream"
+        encoded = base64.b64encode(contents).decode("ascii")
+        return metadata, f"data:{media_type};base64,{encoded}"
 
     async def create_presigned_download_url(self, metadata: UserFile) -> str:
         """Create a temporary presigned URL for stored file metadata."""

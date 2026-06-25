@@ -172,7 +172,8 @@ Body:
     {
       "url": "https://s3-presigned-url.example/screenshot.png",
       "mediaType": "image/png",
-      "title": "screenshot.png"
+      "title": "screenshot.png",
+      "providerFileId": "file-id"
     }
   ]
 }
@@ -187,7 +188,8 @@ Attachment-only body:
     {
       "url": "https://s3-presigned-url.example/screenshot.png",
       "mediaType": "image/png",
-      "title": "screenshot.png"
+      "title": "screenshot.png",
+      "providerFileId": "file-id"
     }
   ]
 }

@@ -11,7 +11,7 @@ FileCategory = Literal["image", "document", "file"]
 class AttachmentInput(BaseModel):
     """Attachment reference accepted by chat and conversation APIs."""
 
-    model_config = ConfigDict(populate_by_name=True)
+    model_config = ConfigDict(populate_by_name=True, extra="allow")
 
     url: str = Field(..., min_length=1)
     media_type: str = Field(
