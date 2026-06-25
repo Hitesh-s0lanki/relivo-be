@@ -117,3 +117,21 @@ curl -N -X POST http://localhost:8000/chat \
 ```bash
 uv run pytest tests/ -v
 ```
+
+## CI/CD
+
+GitHub Actions runs linting, formatting, tests, and a Docker image build for pull requests.
+Pushes to `main` or `release` publish the image to GitHub Container Registry:
+
+```text
+ghcr.io/<owner>/<repo>:sha-<commit-sha>
+ghcr.io/<owner>/<repo>:main
+ghcr.io/<owner>/<repo>:release
+ghcr.io/<owner>/<repo>:latest  # main only
+ghcr.io/<owner>/<repo>:prod    # release only
+```
+
+For Render image deploys, add a repository secret named `RENDER_DEPLOY_HOOK_URL` after the
+Render service exists. Until that secret is present, the workflow still builds and pushes the
+image, then skips the Render deploy step and prints the deployable image tag in the Actions
+summary.
