@@ -185,9 +185,7 @@ class ConversationService:
                 if "metadata" in payload.model_fields_set
                 else message.message_metadata
             )
-            attachments = (
-                payload.attachments if "attachments" in payload.model_fields_set else None
-            )
+            attachments = payload.attachments if "attachments" in payload.model_fields_set else None
             update_data["message_metadata"] = metadata_with_attachments(metadata, attachments)
 
         for field, value in update_data.items():

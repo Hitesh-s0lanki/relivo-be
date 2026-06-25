@@ -348,9 +348,7 @@ class UserFileService:
             self._bucket_region_name = self.settings.region_name
             return self._bucket_region_name
 
-        self._bucket_region_name = _normalize_bucket_location(
-            response.get("LocationConstraint")
-        )
+        self._bucket_region_name = _normalize_bucket_location(response.get("LocationConstraint"))
         return self._bucket_region_name
 
     def _build_s3_key(self, *, user_id: str, file_id: str, filename: str) -> str:

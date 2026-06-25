@@ -416,8 +416,7 @@ async def _hydrate_message_attachment_urls(
             continue
 
         hydrated_attachments = [
-            await _hydrate_attachment_url(attachment, file_service)
-            for attachment in attachments
+            await _hydrate_attachment_url(attachment, file_service) for attachment in attachments
         ]
         message.message_metadata = {**metadata, "attachments": hydrated_attachments}
 
@@ -447,9 +446,7 @@ async def _hydrate_attachment_url(
         **attachment,
         "url": url,
         "mediaType": (
-            metadata.content_type
-            or attachment.get("mediaType")
-            or "application/octet-stream"
+            metadata.content_type or attachment.get("mediaType") or "application/octet-stream"
         ),
         "title": metadata.original_filename or attachment.get("title") or "attachment",
         "providerFileId": metadata.id,

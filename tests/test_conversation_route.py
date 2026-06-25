@@ -148,8 +148,7 @@ class FakeConversationService:
             if "attachments" in payload.model_fields_set:
                 message_metadata = dict(message_metadata or {})
                 message_metadata["attachments"] = [
-                    attachment.model_dump(by_alias=True)
-                    for attachment in payload.attachments or []
+                    attachment.model_dump(by_alias=True) for attachment in payload.attachments or []
                 ]
             update_data["message_metadata"] = message_metadata
         for field, value in update_data.items():
