@@ -110,7 +110,12 @@ def get_s3_file_settings() -> S3FileSettings:
     )
     return S3FileSettings(
         bucket=bucket,
-        region_name=os.getenv("AWS_REGION") or os.getenv("AWS_DEFAULT_REGION", "us-east-1"),
+        region_name=(
+            os.getenv("AWS_S3_BUCKET_REGION")
+            or os.getenv("AWS_S3_REGION")
+            or os.getenv("AWS_REGION")
+            or os.getenv("AWS_DEFAULT_REGION", "us-east-1")
+        ),
         endpoint_url=os.getenv("AWS_S3_ENDPOINT_URL"),
         key_prefix=os.getenv("AWS_S3_KEY_PREFIX", "user-files").strip("/"),
         presigned_expires_seconds=expires,

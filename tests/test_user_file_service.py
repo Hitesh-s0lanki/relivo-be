@@ -12,6 +12,7 @@ from src.services.user_file_service import (
     S3FileSettings,
     UploadTooLargeError,
     UserFileService,
+    get_s3_file_settings,
 )
 
 
@@ -109,6 +110,18 @@ def upload_file(filename: str, contents: bytes, content_type: str) -> UploadFile
         filename=filename,
         headers=Headers({"content-type": content_type}),
     )
+
+
+def test_s3_settings_prefer_bucket_region_over_app_region(monkeypatch) -> None:
+    """Presigned URLs must use the bucket region, not necessarily the app region."""
+    monkeypatch.setenv("AWS_S3_BUCKET", "relivo.chat")
+    monkeypatch.setenv("AWS_REGION", "ap-south-1")
+    monkeypatch.setenv("AWS_S3_BUCKET_REGION", "us-east-1")
+
+    settings = get_s3_file_settings()
+
+    assert settings.bucket == "relivo.chat"
+    assert settings.region_name == "us-east-1"
 
 
 @pytest.mark.asyncio

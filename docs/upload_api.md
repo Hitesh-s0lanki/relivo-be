@@ -63,6 +63,14 @@ private URL.
 Conversation message responses refresh attachment URLs from `providerFileId`, so reloading
 history returns fresh presigned URLs instead of stale stored ones.
 
+Presigned URLs must be signed for the bucket's actual AWS region. If your app region is
+different from the S3 bucket region, set `AWS_S3_BUCKET_REGION` or `AWS_S3_REGION`. For
+example, a `relivo.chat` bucket that redirects to `s3.amazonaws.com` should use:
+
+```bash
+AWS_S3_BUCKET_REGION=us-east-1
+```
+
 ## cURL
 
 ```bash
