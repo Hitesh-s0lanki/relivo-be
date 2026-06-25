@@ -54,10 +54,14 @@ The same S3 limits used by `POST /files` apply. By default each file can be up t
 ```
 
 `url` is a temporary presigned S3 URL for immediate model access and frontend preview.
-`id` and `providerFileId` are the durable file references backed by the `user_files` table.
+It can expire and should not be treated as durable. `id` and `providerFileId` are the
+durable file references backed by the `user_files` table.
 Keep `providerFileId` when sending attachments to `/chat`; the backend uses it to read the
 stored S3 object and send image data to the model without relying on the model downloading a
 private URL.
+
+Conversation message responses refresh attachment URLs from `providerFileId`, so reloading
+history returns fresh presigned URLs instead of stale stored ones.
 
 ## cURL
 
