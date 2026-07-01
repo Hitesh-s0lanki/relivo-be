@@ -16,6 +16,7 @@ uv sync
 ## Run
 
 Set `ENVIRONMENT=development` or `ENVIRONMENT=production` in `.env`, then run:
+
 ```bash
 python src/main.py
 ```
@@ -34,31 +35,31 @@ uv run python scripts/apply_migrations.py
 
 The app loads from a `.env` file or environment variables. All have defaults:
 
-| Variable      | Default              | Description                         |
-|---------------|----------------------|-------------------------------------|
-| `APP_NAME`    | `relivo-be-server`   | Application name                    |
-| `VERSION`     | `0.1.0`              | App version                         |
-| `ENVIRONMENT` | `development`        | Runtime environment                 |
-| `HOST`        | `127.0.0.1`          | Server host                         |
-| `PORT`        | `8000`               | Server port                         |
-| `RELOAD`      | based on environment | Override Uvicorn auto-reload toggle |
-| `OPENAI_API_KEY` | unset             | Enables real model streaming when configured |
-| `RELIVO_CHAT_MODEL` | `gpt-5-mini` | Reasoning-capable chat model used when `OPENAI_API_KEY` is set |
-| `RELIVO_CHAT_REASONING_EFFORT` | `low` | Reasoning effort for the chat model |
-| `RELIVO_CHAT_USE_RESPONSES_API` | `true` | Uses OpenAI Responses API mode for reasoning models |
-| `FIRECRAWL_API_KEY` | unset | Enables authenticated Firecrawl MCP tools for agent web search, scrape, crawl, and parse access |
-| `FIRECRAWL_MCP_ENABLED` | `true` | Toggle Firecrawl MCP tool loading for the chat agent |
-| `FIRECRAWL_MCP_URL` | `https://mcp.firecrawl.dev/v2/mcp` | Firecrawl MCP endpoint. Supports `{FIRECRAWL_API_KEY}` in custom URLs |
-| `AWS_REGION` | `us-east-1` | Default AWS region for AWS clients |
-| `AWS_ACCESS_KEY_ID` | unset | AWS access key id used by boto3 for S3 |
-| `AWS_SECRET_ACCESS_KEY` | unset | AWS secret access key used by boto3 for S3 |
-| `AWS_S3_BUCKET` | unset | S3 bucket used for user file uploads |
-| `AWS_S3_KEY_PREFIX` | `user-files` | S3 key prefix for uploaded files |
-| `AWS_S3_MAX_UPLOAD_MB` | `25` | Maximum uploaded file size in MB |
-| `AWS_S3_PRESIGNED_EXPIRES_SECONDS` | `3600` | Lifetime for generated download URLs |
-| `AWS_S3_ENDPOINT_URL` | unset | Optional S3-compatible endpoint URL |
-| `AWS_S3_SERVER_SIDE_ENCRYPTION` | unset | Optional S3 server-side encryption mode |
-| `AWS_S3_KMS_KEY_ID` | unset | Optional KMS key id when using KMS encryption |
+| Variable                           | Default                            | Description                                                                                     |
+| ---------------------------------- | ---------------------------------- | ----------------------------------------------------------------------------------------------- |
+| `APP_NAME`                         | `relivo-be-server`                 | Application name                                                                                |
+| `VERSION`                          | `0.1.0`                            | App version                                                                                     |
+| `ENVIRONMENT`                      | `development`                      | Runtime environment                                                                             |
+| `HOST`                             | `127.0.0.1`                        | Server host                                                                                     |
+| `PORT`                             | `8000`                             | Server port                                                                                     |
+| `RELOAD`                           | based on environment               | Override Uvicorn auto-reload toggle                                                             |
+| `OPENAI_API_KEY`                   | unset                              | Enables real model streaming when configured                                                    |
+| `RELIVO_CHAT_MODEL`                | `gpt-5-mini`                       | Reasoning-capable chat model used when `OPENAI_API_KEY` is set                                  |
+| `RELIVO_CHAT_REASONING_EFFORT`     | `low`                              | Reasoning effort for the chat model                                                             |
+| `RELIVO_CHAT_USE_RESPONSES_API`    | `true`                             | Uses OpenAI Responses API mode for reasoning models                                             |
+| `FIRECRAWL_API_KEY`                | unset                              | Enables authenticated Firecrawl MCP tools for agent web search, scrape, crawl, and parse access |
+| `FIRECRAWL_MCP_ENABLED`            | `true`                             | Toggle Firecrawl MCP tool loading for the chat agent                                            |
+| `FIRECRAWL_MCP_URL`                | `https://mcp.firecrawl.dev/v2/mcp` | Firecrawl MCP endpoint. Supports `{FIRECRAWL_API_KEY}` in custom URLs                           |
+| `AWS_REGION`                       | `us-east-1`                        | Default AWS region for AWS clients                                                              |
+| `AWS_ACCESS_KEY_ID`                | unset                              | AWS access key id used by boto3 for S3                                                          |
+| `AWS_SECRET_ACCESS_KEY`            | unset                              | AWS secret access key used by boto3 for S3                                                      |
+| `AWS_S3_BUCKET`                    | unset                              | S3 bucket used for user file uploads                                                            |
+| `AWS_S3_KEY_PREFIX`                | `user-files`                       | S3 key prefix for uploaded files                                                                |
+| `AWS_S3_MAX_UPLOAD_MB`             | `25`                               | Maximum uploaded file size in MB                                                                |
+| `AWS_S3_PRESIGNED_EXPIRES_SECONDS` | `3600`                             | Lifetime for generated download URLs                                                            |
+| `AWS_S3_ENDPOINT_URL`              | unset                              | Optional S3-compatible endpoint URL                                                             |
+| `AWS_S3_SERVER_SIDE_ENCRYPTION`    | unset                              | Optional S3 server-side encryption mode                                                         |
+| `AWS_S3_KMS_KEY_ID`                | unset                              | Optional KMS key id when using KMS encryption                                                   |
 
 ## API
 
