@@ -1,0 +1,135 @@
+name: Docker Publish
+
+on:
+  push:
+    branches:
+      - main
+      - release
+  workflow_dispatch:
+
+env:
+  REGISTRY: ghcr.io
+
+jobs:
+  publish:
+    name: Test, Build, Push, and Deploy
+    runs-on: ubuntu-latest
+    env:
+      RENDER_DEPLOY_HOOK_URL: ${{ secrets.RENDER_DEPLOY_HOOK_URL }}
+
+    permissions:
+      contents: read
+      packages: write
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v6
+        with:
+          enable-cache: true
+
+      - name: Install dependencies
+        run: uv sync --all-groups --frozen
+
+      - name: Create .env file
+        run: |
+          cat > .env <<EOF
+          APP_NAME=relivo-be-server
+          VERSION=0.1.0
+          ENVIRONMENT=test
+          DATABASE_URL=postgresql+asyncpg://postgres:postgres@localhost:5432/relivo
+          OPENAI_API_KEY=sk-test-key
+          RELIVO_CHAT_MODEL=gpt-5-mini
+          FIRECRAWL_MCP_ENABLED=false
+          EOF
+
+      - name: Run ruff lint
+        run: uv run ruff check .
+
+      - name: Run ruff format check
+        run: uv run ruff format --check .
+
+      - name: Run tests
+        run: uv run pytest tests/ -v
+
+      - name: Prepare image tags
+        id: image
+        shell: bash
+        run: |
+          IMAGE="${REGISTRY}/${GITHUB_REPOSITORY,,}"
+          SAFE_BRANCH="$(echo "${GITHUB_REF_NAME}" | tr '[:upper:]' '[:lower:]' | sed -E 's/[^a-z0-9_.-]+/-/g' | sed -E 's/^-+|-+$//g')"
+          SHA_TAG="${IMAGE}:sha-${GITHUB_SHA}"
+          TAGS="${SHA_TAG}"$'\n'"${IMAGE}:${SAFE_BRANCH}"
+
+          if [[ "${GITHUB_REF_NAME}" == "main" ]]; then
+            TAGS="${TAGS}"$'\n'"${IMAGE}:latest"
+          fi
+
+          if [[ "${GITHUB_REF_NAME}" == "release" ]]; then
+            TAGS="${TAGS}"$'\n'"${IMAGE}:prod"
+          fi
+
+          {
+            echo "name=${IMAGE}"
+            echo "primary_tag=${SHA_TAG}"
+            echo "tags<<EOF"
+            echo "${TAGS}"
+            echo "EOF"
+          } >> "${GITHUB_OUTPUT}"
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push Docker image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: true
+          platforms: linux/amd64
+          tags: ${{ steps.image.outputs.tags }}
+
+      - name: Trigger Render deploy
+        if: env.RENDER_DEPLOY_HOOK_URL != ''
+        env:
+          IMAGE_URL: ${{ steps.image.outputs.primary_tag }}
+        shell: bash
+        run: |
+          ENCODED_IMAGE_URL="$(python -c 'import os, urllib.parse; print(urllib.parse.quote(os.environ["IMAGE_URL"], safe=""))')"
+          SEPARATOR="?"
+          if [[ "${RENDER_DEPLOY_HOOK_URL}" == *"?"* ]]; then
+            SEPARATOR="&"
+          fi
+
+          curl -fsS -X POST "${RENDER_DEPLOY_HOOK_URL}${SEPARATOR}imgURL=${ENCODED_IMAGE_URL}"
+
+      - name: Summarize deployment artifact
+        env:
+          IMAGE_URL: ${{ steps.image.outputs.primary_tag }}
+        shell: bash
+        run: |
+          {
+            echo "### Docker image"
+            echo ""
+            echo "- Image: \`${{ steps.image.outputs.name }}\`"
+            echo "- Deployable tag: \`${IMAGE_URL}\`"
+            echo ""
+            if [[ -n "${RENDER_DEPLOY_HOOK_URL}" ]]; then
+              echo "Render deploy hook was triggered with the deployable tag."
+            else
+              echo "Render deploy was skipped because \`RENDER_DEPLOY_HOOK_URL\` is not configured yet."
+            fi
+          } >> "${GITHUB_STEP_SUMMARY}"
