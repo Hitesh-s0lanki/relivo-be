@@ -192,7 +192,7 @@ matplotlib-inline==0.2.2
     # via
     #   ipykernel
     #   ipython
-mcp==1.28.0
+mcp==1.28.1
     # via langchain-mcp-adapters
 nest-asyncio==1.6.0
     # via ipykernel
