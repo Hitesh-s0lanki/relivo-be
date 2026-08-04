@@ -3,7 +3,7 @@
 import asyncio
 import json
 import logging
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Awaitable, Callable
 from dataclasses import dataclass
 from typing import Any
 from uuid import UUID
@@ -24,6 +24,9 @@ from src.services.user_file_service import (
 from src.utils.error_response import build_error_response, log_error_response
 
 logger = logging.getLogger(__name__)
+
+AgentResolver = Callable[[str], Awaitable[BaseAgent]]
+
 FAST_GREETING_RESPONSES = {
     "hello": "Hello! How can I help?",
     "hi": "Hi! How can I help?",
@@ -52,11 +55,19 @@ class ChatService:
         agent: BaseAgent,
         conversation_service: ConversationService | None = None,
         user_file_service: UserFileService | None = None,
+        agent_resolver: AgentResolver | None = None,
     ) -> None:
-        """Initialize the service with an agent dependency."""
+        """
+        Initialize the service with an agent dependency.
+
+        `agent` is the shared base agent and the fallback. When `agent_resolver`
+        is set, each turn resolves the agent for the requesting user so their own
+        MCP tools are bound in, and nobody else's are.
+        """
         self.agent = agent
         self.conversation_service = conversation_service
         self.user_file_service = user_file_service
+        self.agent_resolver = agent_resolver
 
     async def stream_chat(self, request: ChatRequest) -> AsyncIterator[str]:
         """Stream a chat response as Vercel AI SDK UI message stream frames."""
@@ -77,7 +88,8 @@ class ChatService:
 
         try:
             agent_context = await self._agent_context(request)
-            async for chunk in self.agent.astream_events(
+            agent = await self._resolve_agent(agent_context.get("user_id"))
+            async for chunk in agent.astream_events(
                 await self._agent_prompt(request),
                 thread_id=request.thread_id,
                 context=agent_context,
@@ -428,6 +440,25 @@ class ChatService:
         )
         _MEMORY_EXTRACTION_TASKS.add(task)
         task.add_done_callback(_MEMORY_EXTRACTION_TASKS.discard)
+
+    async def _resolve_agent(self, user_id: str | None) -> BaseAgent:
+        """
+        Resolve the agent for this turn, falling back to the shared base agent.
+
+        A resolution failure must never cost the user their reply, so it is
+        logged and the turn continues with the base tool set.
+        """
+        if self.agent_resolver is None or not user_id:
+            return self.agent
+        try:
+            return await self.agent_resolver(user_id)
+        except Exception as exc:  # noqa: BLE001 - the base agent is always usable
+            logger.warning(
+                "Falling back to the base agent for user_id=%s after resolve failure: %s",
+                user_id,
+                exc,
+            )
+            return self.agent
 
     def _agent_name(self) -> str:
         """Return the configured agent name with a stable fallback for tests."""

@@ -6,10 +6,12 @@ from src.agents.orchestrator import (
     DEFAULT_REASONING_EFFORT,
     ORCHESTRATOR_AGENT_NAME,
     build_openai_chat_model,
+    clear_agent_cache,
     env_bool,
     get_chat_agent,
     get_orchestrator_agent,
     load_orchestrator_prompt,
+    resolve_agent_for_user,
     warm_orchestrator_agent,
 )
 
@@ -20,9 +22,11 @@ __all__ = [
     "DEFAULT_REASONING_EFFORT",
     "ORCHESTRATOR_AGENT_NAME",
     "build_openai_chat_model",
+    "clear_agent_cache",
     "env_bool",
     "get_chat_agent",
     "get_orchestrator_agent",
     "load_orchestrator_prompt",
+    "resolve_agent_for_user",
     "warm_orchestrator_agent",
 ]

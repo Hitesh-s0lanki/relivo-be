@@ -7,7 +7,9 @@ from src.models.message import (
     ConversationMessageReasoning,
     ConversationMessageToolCall,
 )
+from src.models.user import User
 from src.models.user_file import UserFile
+from src.models.user_mcp_server import UserMcpCredential, UserMcpServer
 
 __all__ = [
     "Conversation",
@@ -15,5 +17,8 @@ __all__ = [
     "ConversationMessageReasoning",
     "ConversationMessageToolCall",
     "Memory",
+    "User",
     "UserFile",
+    "UserMcpCredential",
+    "UserMcpServer",
 ]
