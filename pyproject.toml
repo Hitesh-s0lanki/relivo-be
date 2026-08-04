@@ -15,6 +15,7 @@ dependencies = [
     "charset-normalizer==3.4.7",
     "click==8.3.2",
     "colorama==0.4.6 ; sys_platform == 'win32'",
+    "cryptography==49.0.0",
     "distro==1.9.0",
     "fastapi==0.135.3",
     "greenlet==3.4.0",
@@ -86,6 +87,8 @@ pythonpath = ["."]
 line-length = 100
 fix = true
 target-version = "py313"
+# Exploratory notebooks are not held to the src/ lint and format gate.
+exclude = ["notebooks"]
 
 [tool.ruff.format]
 quote-style = "double"

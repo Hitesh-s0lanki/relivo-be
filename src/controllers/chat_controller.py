@@ -6,7 +6,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import StreamingResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from src.agents import BaseAgent, get_chat_agent
+from src.agents import BaseAgent, get_chat_agent, resolve_agent_for_user
 from src.database import get_db_session
 from src.schemas.chat import ChatErrorResponse, ChatRequest
 from src.services.chat_service import ChatService
@@ -25,7 +25,17 @@ def get_chat_service(
     """Resolve the chat service dependency."""
     conversation_service = ConversationService(session) if session is not None else None
     user_file_service = UserFileService(session) if session is not None else None
-    return ChatService(agent, conversation_service, user_file_service)
+
+    async def resolve_agent(user_id: str) -> BaseAgent:
+        """Bind the requesting user's MCP tools for this turn."""
+        return await resolve_agent_for_user(user_id, session)
+
+    return ChatService(
+        agent,
+        conversation_service,
+        user_file_service,
+        agent_resolver=resolve_agent if session is not None else None,
+    )
 
 
 ChatServiceDependency = Depends(get_chat_service)

@@ -8,6 +8,7 @@ from src.tools.firecrawl_mcp import (
     firecrawl_mcp_url,
     load_firecrawl_mcp_tools,
 )
+from src.tools.mcp_registry import McpToolRegistry, get_tool_registry
 from src.tools.memory_tools import (
     memory_commit,
     memory_context,
@@ -17,9 +18,11 @@ from src.tools.memory_tools import (
 
 __all__ = [
     "DEFAULT_FIRECRAWL_MCP_URL",
+    "McpToolRegistry",
     "firecrawl_mcp_auth_config",
     "firecrawl_mcp_url",
     "get_demo_context",
+    "get_tool_registry",
     "load_firecrawl_mcp_tools",
     "memory_commit",
     "memory_context",
