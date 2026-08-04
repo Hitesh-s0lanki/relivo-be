@@ -163,7 +163,7 @@ langgraph==1.1.6
     # via
     #   langchain
     #   relivo-be-server
-langgraph-checkpoint==4.0.1
+langgraph-checkpoint==4.1.1
     # via
     #   langgraph
     #   langgraph-prebuilt
